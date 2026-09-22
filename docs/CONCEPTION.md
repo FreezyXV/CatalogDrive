@@ -2,9 +2,9 @@
 
 ## État de la réalisation au 22 septembre 2026
 
-Les jalons J1 à J5 décrits ci-dessous sont désormais implémentés dans le même MVP : CSV/XLSX, structure éditable, mapping et modèles fournisseurs, moteur de règles, jobs PostgreSQL, doublons, revue humaine, exports générique/WooCommerce/PrestaShop/Shopify/personnalisé, modèles d’export, rapport et usage. J6 est partiellement livré avec l’adaptateur S3 Supabase, les URLs signées, la rétention quotidienne et la page de paramètres. Les passages formulés au futur dans ce document conservent le plan de livraison initial ; le [rapport de vérification](VERIFICATION.md) fait foi pour l’état testé.
+Les jalons J1 à J5 décrits ci-dessous sont désormais implémentés dans le même MVP : CSV/XLSX, structure éditable, mapping et modèles fournisseurs, moteur de règles, jobs PostgreSQL, doublons, revue humaine, exports générique/WooCommerce/PrestaShop/Shopify/personnalisé, modèles d’export, rapport et usage. J6 est partiellement livré avec l’adaptateur S3 Supabase, les URLs signées, la rétention quotidienne et la page de paramètres. Le pilote Vercel/Supabase est déployé et accessible publiquement à la demande du propriétaire ; les contrôles de durcissement décrits plus bas restent à mener avant de le qualifier pour une exploitation commerciale. Les passages formulés au futur dans ce document conservent le plan de livraison initial ; le [rapport de vérification](VERIFICATION.md) fait foi pour l’état testé.
 
-Le déploiement cible confirmé par les éléments fournis est **Vercel + Supabase (Francfort)**. Le dépôt GitHub `FreezyXV/CatalogDrive` est la source de déploiement. Les secrets de base et de stockage ne figurent ni dans les captures ni dans le dépôt ; leur configuration reste une opération d’environnement.
+Le déploiement est **Vercel + Supabase (Francfort)**. Le dépôt GitHub `FreezyXV/CatalogDrive` est la source de déploiement. Les secrets de base et de stockage sont configurés dans l’environnement de production, sans figurer dans le dépôt.
 
 ## État initial et décisions
 

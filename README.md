@@ -44,7 +44,7 @@ Le fichier [public/demo/fournisseur-demo.csv](public/demo/fournisseur-demo.csv) 
 
 ## Déploiement Vercel + Supabase
 
-Le dépôt est configuré pour Vercel et le projet Supabase montré par le propriétaire. Aucun secret n’est commité.
+Le pilote est déployé sur Vercel avec PostgreSQL et Storage Supabase. Son [domaine de production](https://catalog-drive-ivans-projects-66d9a97b.vercel.app) est accessible publiquement. Aucun secret n’est commité. Les limites avant exploitation commerciale sont détaillées dans [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 1. Dans Supabase, appliquer `npm run db:migrate` avec `DATABASE_URL` pointant vers la base du projet. Pour Vercel, utiliser de préférence l’URL du pooler Supabase compatible IPv4.
 2. Créer un bucket privé `catamotive-private`, activer le protocole S3 et créer une paire de clés S3. Vérifier le précontrôle CORS des requêtes `PUT` directes depuis l’origine Vercel.
