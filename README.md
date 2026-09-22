@@ -47,7 +47,7 @@ Le fichier [public/demo/fournisseur-demo.csv](public/demo/fournisseur-demo.csv) 
 Le dépôt est configuré pour Vercel et le projet Supabase montré par le propriétaire. Aucun secret n’est commité.
 
 1. Dans Supabase, appliquer `npm run db:migrate` avec `DATABASE_URL` pointant vers la base du projet. Pour Vercel, utiliser de préférence l’URL du pooler Supabase compatible IPv4.
-2. Créer un bucket privé `catamotive-private`, activer le protocole S3 et créer une paire de clés S3. Autoriser en CORS l’origine Vercel pour les requêtes `PUT` directes.
+2. Créer un bucket privé `catamotive-private`, activer le protocole S3 et créer une paire de clés S3. Vérifier le précontrôle CORS des requêtes `PUT` directes depuis l’origine Vercel.
 3. Configurer dans Vercel :
 
 ```text
@@ -64,6 +64,8 @@ CRON_SECRET=une-valeur-aleatoire-d-au-moins-32-caracteres
 ```
 
 4. Déployer avec le preset Next.js. Le cron quotidien de [vercel.json](vercel.json) applique la durée de conservation configurée par organisation.
+
+Le projet Vercel relié à ce dépôt est `catalog-drive` dans l’équipe `ivans-projects-66d9a97b`. Le projet `catalog-drive-gbla` construit un autre dépôt et ne doit pas recevoir les variables de CataMotive. Les variables `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` ne sont pas utilisées par l’application actuelle : elle accède à PostgreSQL côté serveur et à Supabase Storage via l’adaptateur S3.
 
 En production S3, le navigateur reçoit une URL d’upload signée valable 5 minutes. Le serveur relit le fichier, vérifie taille, empreinte et format avant de créer l’import. Les téléchargements utilisent des URL signées d’une minute après contrôle de la session et de l’organisation.
 
