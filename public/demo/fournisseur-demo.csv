@@ -1,0 +1,6 @@
+Référence fournisseur;Désignation;Marque;Prix achat;Stock;EAN
+DEMO-001;Filtre de démonstration;MARQUE FICTIVE;12,50;8;0012345678905
+DEMO-002;Joint de démonstration;Marque fictive;3,20;24;
+DEMO-003;Support de démonstration;MARQUE FICTIVE;45.00;2;
+DEMO-004;"Libellé avec ; séparateur";marque fictive;7,90;12;
+DEMO-005;Pièce fictive sans compatibilité déclarée;MARQUE FICTIVE;18,00;0;
