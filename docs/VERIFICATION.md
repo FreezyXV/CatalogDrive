@@ -11,12 +11,12 @@ Le parcours métier demandé fonctionne localement de bout en bout avec PostgreS
 | `npm run format:check`             | Formatage Prettier validé                                                     |
 | `npm run lint`                     | Aucune erreur ni avertissement ESLint                                         |
 | `npm run typecheck`                | TypeScript strict validé                                                      |
-| `npm test`                         | **40 tests réussis** sur 7 fichiers                                           |
+| `npm test`                         | **41 tests réussis** sur 8 fichiers                                           |
 | `npm run build`                    | Build Next.js 16/Webpack réussi, 21 routes/pages compilées                    |
 | `npm run test:e2e`                 | **7 parcours Chrome** : CSV, isolation, refus, mobile, métier complet et XLSX |
 | `npm audit --audit-level=moderate` | 0 vulnérabilité après remplacement de la dépendance UUID transitive           |
 
-Le 22 septembre, `npm run check` a de nouveau réussi : lint, typage, 40 tests et build. Le premier lancement sans autorisation réseau locale a échoué sur `EPERM 127.0.0.1:55439` ; la relance avec accès à la base locale a réussi.
+Le 22 septembre, `npm run check` a de nouveau réussi : lint, typage, 41 tests et build. Le premier lancement sans autorisation réseau locale a échoué sur `EPERM 127.0.0.1:55439` ; la relance avec accès à la base locale a réussi.
 
 ## Vérification du pilote hébergé
 
@@ -28,6 +28,7 @@ Le 22 septembre, `npm run check` a de nouveau réussi : lint, typage, 40 tests e
 - Un second parcours hébergé a vérifié le mapping suggéré, son enregistrement comme modèle, le traitement et l’export générique. Le catalogue signé contenait les deux références valides et excluait la ligne au prix invalide ; le rapport signé mentionnait cette ligne refusée.
 - Un vrai XLSX à plusieurs feuilles a été transféré par URL signée et analysé en production : feuille `Catalogue`, référence `00123` et formule `=1+1` conservée comme texte. Les deux imports, les quatre objets S3 associés, les modèles et le second compte de test ont été supprimés après vérification.
 - Après désactivation de la protection SSO Vercel, `/`, `/inscription`, `/connexion` et `/tarifs` répondent `200` sans authentification Vercel. `/dashboard` redirige vers `/connexion` sans session CataMotive.
+- Les deux alias Vercel publics sont autorisés explicitement pour les requêtes de mutation ; une origine voisine ou absente est refusée par un test dédié.
 
 ## Preuves fonctionnelles
 

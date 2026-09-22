@@ -53,6 +53,8 @@ Le pilote est déployé sur Vercel avec PostgreSQL et Storage Supabase. Son [dom
 ```text
 DATABASE_URL=postgresql://...
 APP_ORIGIN=https://votre-domaine.vercel.app
+# Facultatif : autres domaines exacts servis par le même projet, séparés par des virgules
+APP_ORIGINS=https://autre-alias.vercel.app
 COOKIE_SECURE=true
 STORAGE_DRIVER=s3
 S3_ENDPOINT=https://fifzvqbrepohffamxyap.storage.supabase.co/storage/v1/s3

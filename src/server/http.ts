@@ -9,10 +9,20 @@ export class HttpError extends Error {
   }
 }
 export function checkOrigin(request: Request) {
-  if (
-    !process.env.APP_ORIGIN ||
-    request.headers.get("origin") !== new URL(process.env.APP_ORIGIN).origin
-  )
+  const origin = request.headers.get("origin");
+  const configured = [
+    process.env.APP_ORIGIN,
+    ...(process.env.APP_ORIGINS?.split(",") ?? []),
+  ];
+  const allowed = configured.some((value) => {
+    if (!value?.trim()) return false;
+    try {
+      return new URL(value.trim()).origin === origin;
+    } catch {
+      return false;
+    }
+  });
+  if (!origin || !allowed)
     throw new HttpError(403, "Origine de la requête refusée.");
 }
 export async function readJson(request: Request, maxBytes = 4096) {
