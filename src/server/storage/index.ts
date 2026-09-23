@@ -376,18 +376,14 @@ export class S3FileStore implements FileStore {
 
   read(key: string) {
     const location = resolveS3Location(key, this.bucket, this.uploadBucket);
-    const output = new Readable({ read() {} });
-    void this.client
-      .send(new GetObjectCommand(location))
-      .then((result) => {
-        if (!result.Body) return output.destroy(new Error("Objet introuvable"));
-        const source = result.Body as NodeJS.ReadableStream;
-        source.on("data", (chunk) => output.push(chunk));
-        source.on("end", () => output.push(null));
-        source.on("error", (error) => output.destroy(error));
-      })
-      .catch((error) => output.destroy(error));
-    return output;
+    const client = this.client;
+    return Readable.from(
+      (async function* () {
+        const result = await client.send(new GetObjectCommand(location));
+        if (!result.Body) throw new Error("Objet introuvable");
+        for await (const chunk of result.Body as Readable) yield chunk;
+      })(),
+    );
   }
 
   async remove(key: string) {

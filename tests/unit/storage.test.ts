@@ -3,7 +3,12 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import { LocalFileStore, resolveS3Location } from "../../src/server/storage";
+import { Readable } from "node:stream";
+import {
+  LocalFileStore,
+  S3FileStore,
+  resolveS3Location,
+} from "../../src/server/storage";
 import { SMALL_UPLOAD_BYTES } from "../../src/domain/upload-limit";
 const dirs: string[] = [];
 async function storage() {
@@ -95,5 +100,37 @@ describe("routage S3 des imports", () => {
     expect(() =>
       resolveS3Location("incoming/../secret", "archive", "uploads"),
     ).toThrow("Clé de stockage");
+  });
+  it("ralentit la lecture distante lorsque le consommateur est en pause", async () => {
+    const store = new S3FileStore("catalogues", {
+      endpoint: "https://s3.example.test",
+      region: "eu-central-003",
+      accessKeyId: "test",
+      secretAccessKey: "test",
+    });
+    let pulled = 0;
+    Object.defineProperty(store, "client", {
+      value: {
+        send: async () => ({
+          Body: Readable.from(
+            (async function* () {
+              for (let index = 0; index < 256; index++) {
+                pulled++;
+                yield Buffer.alloc(64 * 1024);
+              }
+            })(),
+          ),
+        }),
+      },
+    });
+    const stream = store.read(`${randomUUID()}/${randomUUID()}`);
+    const iterator = stream[Symbol.asyncIterator]();
+    try {
+      expect((await iterator.next()).value).toHaveLength(64 * 1024);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(pulled).toBeLessThan(64);
+    } finally {
+      await iterator.return?.();
+    }
   });
 });
