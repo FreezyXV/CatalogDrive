@@ -6,6 +6,8 @@ import { randomUUID, createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import {
   DeleteObjectCommand,
+  AbortMultipartUploadCommand,
+  ListMultipartUploadsCommand,
   ListObjectVersionsCommand,
 } from "@aws-sdk/client-s3";
 import {
@@ -168,5 +170,61 @@ describe("routage S3 des imports", () => {
     });
     await store.remove(key);
     expect(deleted).toEqual([undefined, "original", "marker"]);
+  });
+  it("abandonne seulement les transferts incomplets de CataMotive vieux de deux heures", async () => {
+    const store = new S3FileStore("archives", {
+      endpoint: "https://s3.eu-central-003.backblazeb2.com",
+      region: "eu-central-003",
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      uploadBucket: "incoming",
+    });
+    const oldKey = `${randomUUID()}/${randomUUID()}`;
+    const recentKey = `${randomUUID()}/${randomUUID()}`;
+    const aborted: string[] = [];
+    let pages = 0;
+    Object.defineProperty(store, "client", {
+      value: {
+        send: async (command: unknown) => {
+          if (command instanceof ListMultipartUploadsCommand) {
+            expect(command.input.Bucket).toBe("incoming");
+            pages++;
+            return pages === 1
+              ? {
+                  Uploads: [
+                    {
+                      Key: oldKey,
+                      UploadId: "stale",
+                      Initiated: new Date(Date.now() - 3 * 60 * 60 * 1000),
+                    },
+                    {
+                      Key: recentKey,
+                      UploadId: "active",
+                      Initiated: new Date(),
+                    },
+                    {
+                      Key: "someone-else",
+                      UploadId: "foreign",
+                      Initiated: new Date(0),
+                    },
+                  ],
+                  IsTruncated: true,
+                  NextKeyMarker: oldKey,
+                  NextUploadIdMarker: "stale",
+                }
+              : { Uploads: [], IsTruncated: false };
+          }
+          if (command instanceof AbortMultipartUploadCommand) {
+            expect(command.input.Bucket).toBe("incoming");
+            aborted.push(command.input.UploadId!);
+            return {};
+          }
+          throw new Error("Commande S3 inattendue");
+        },
+      },
+    });
+    expect(await store.cleanupAbandonedMultipartUploads()).toBe(1);
+    expect(pages).toBe(2);
+    expect(aborted).toEqual(["stale"]);
   });
 });

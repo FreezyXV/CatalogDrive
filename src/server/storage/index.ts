@@ -17,6 +17,7 @@ import {
   CreateMultipartUploadCommand,
   UploadPartCommand,
   ListPartsCommand,
+  ListMultipartUploadsCommand,
   ListObjectVersionsCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
@@ -74,6 +75,7 @@ export interface FileStore {
     token: string,
   ): Promise<string>;
   abortMultipartUpload?(organizationId: string, token: string): Promise<void>;
+  cleanupAbandonedMultipartUploads?(): Promise<number>;
 }
 export class LocalFileStore implements FileStore {
   constructor(private root: string) {}
@@ -326,6 +328,53 @@ export class S3FileStore implements FileStore {
         UploadId: session.uploadId,
       }),
     );
+  }
+
+  async cleanupAbandonedMultipartUploads() {
+    const bucket = this.uploadBucket ?? this.bucket;
+    const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+    let keyMarker: string | undefined;
+    let uploadIdMarker: string | undefined;
+    let scanned = 0;
+    let aborted = 0;
+    let truncated = false;
+    do {
+      const page = await this.client.send(
+        new ListMultipartUploadsCommand({
+          Bucket: bucket,
+          KeyMarker: keyMarker,
+          UploadIdMarker: uploadIdMarker,
+          MaxUploads: 1000,
+        }),
+      );
+      const uploads = page.Uploads ?? [];
+      scanned += uploads.length;
+      for (const upload of uploads) {
+        if (
+          !upload.Key ||
+          !/^[a-f0-9-]{36}\/[a-f0-9-]{36}$/.test(upload.Key) ||
+          !upload.UploadId ||
+          !upload.Initiated ||
+          upload.Initiated.getTime() >= cutoff
+        )
+          continue;
+        await this.client.send(
+          new AbortMultipartUploadCommand({
+            Bucket: bucket,
+            Key: upload.Key,
+            UploadId: upload.UploadId,
+          }),
+        );
+        aborted++;
+        if (aborted >= 100) return aborted;
+      }
+      truncated = page.IsTruncated ?? false;
+      keyMarker = page.NextKeyMarker;
+      uploadIdMarker = page.NextUploadIdMarker;
+      if (truncated && (!keyMarker || !uploadIdMarker))
+        throw new Error("Liste des transferts S3 incomplète.");
+    } while (truncated && scanned < 10_000);
+    return aborted;
   }
 
   async put(
