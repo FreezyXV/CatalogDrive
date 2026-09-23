@@ -1,5 +1,5 @@
-import { beforeAll, afterAll, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
+import { createHash, randomUUID } from "node:crypto";
 import yazl from "yazl";
 import ExcelJS from "exceljs";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
@@ -34,6 +34,7 @@ import {
   getImport,
   importCsv,
   importZip,
+  importSignedUpload,
   importSignedArchive,
   getSourceArchiveForImport,
   listImports,
@@ -307,6 +308,29 @@ describe("compte et import sur PostgreSQL réel", () => {
     );
     await removeImport(actorA, id, store);
   });
+  it("diagnostique un CSV signé et calcule son empreinte en une seule lecture", async () => {
+    const content = Buffer.from("ref;nom\nS-001;Pièce signée\n");
+    const stored = await store.put(
+      actorA.organizationId,
+      new Blob([new Uint8Array(content)]).stream(),
+    );
+    const read = vi.spyOn(store, "read");
+    let id: string | undefined;
+    try {
+      id = await importSignedUpload(actorA, "signe.csv", stored.key, store);
+      const imported = await getImport(actorA, id);
+      expect(imported.file.sizeBytes).toBe(content.length);
+      expect(imported.file.sha256).toBe(
+        createHash("sha256").update(content).digest("hex"),
+      );
+      expect(imported.job.diagnostic.preview[0].values[0]).toBe("S-001");
+      expect(read).toHaveBeenCalledTimes(1);
+    } finally {
+      read.mockRestore();
+      if (id) await removeImport(actorA, id, store);
+      else await store.remove(stored.key);
+    }
+  });
   it("exécute réellement mapping, règles, rapport qualité et export téléchargeable", async () => {
     const id = await importCsv(
       actorA,
@@ -365,6 +389,27 @@ describe("compte et import sur PostgreSQL réel", () => {
     await removeImport(actorA, id, store);
     await expect(store.sample(exported.storageKey)).rejects.toThrow();
     await expect(store.sample(exported.reportKey)).rejects.toThrow();
+  });
+  it("évite une nouvelle lecture de l'original quand le mapping conserve les options détectées", async () => {
+    const id = await importCsv(
+      actorA,
+      "options.csv",
+      new Blob(["ref;nom\nA;Piece\n"]).stream(),
+      store,
+    );
+    const read = vi.spyOn(LocalFileStore.prototype, "read");
+    try {
+      const mapping = { supplier_reference: 0, product_name: 1 } as const;
+      await saveMapping(actorA, id, mapping, DEFAULT_RULES, {});
+      expect(read).not.toHaveBeenCalled();
+      await saveMapping(actorA, id, mapping, DEFAULT_RULES, {
+        encoding: "windows-1252",
+      });
+      expect(read).toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+      await removeImport(actorA, id, store);
+    }
   });
   it("empêche une relation inter-organisations au niveau SQL", async () => {
     const id = await importCsv(actorA, "original.csv", csv(), store);

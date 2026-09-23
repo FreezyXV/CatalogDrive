@@ -48,12 +48,21 @@ export async function saveMapping(
       409,
       "Cet import a déjà été lancé. Créez un nouvel import pour appliquer un autre mapping.",
     );
-  const diagnostic = await inspectSource(
-    getFileStore(),
-    file.storageKey,
-    file.originalName,
-    options,
+  const unchangedOptions = (
+    Object.keys(options) as (keyof ReadOptions)[]
+  ).every(
+    (key) =>
+      options[key] === undefined || options[key] === job.readOptions[key],
   );
+  const diagnostic = unchangedOptions
+    ? job.diagnostic
+    : await inspectSource(
+        getFileStore(),
+        file.storageKey,
+        file.originalName,
+        options,
+      );
+  const effectiveOptions = unchangedOptions ? job.readOptions : options;
   try {
     validateMapping(mapping, diagnostic.headers.length);
   } catch (error) {
@@ -66,7 +75,7 @@ export async function saveMapping(
       .set({
         mapping,
         rules,
-        readOptions: options,
+        readOptions: effectiveOptions,
         diagnostic,
         status: "mapped",
         error: null,
@@ -90,7 +99,7 @@ export async function saveMapping(
           headers: diagnostic.headers,
           mapping,
           rules,
-          readOptions: options,
+          readOptions: effectiveOptions,
         })
         .onConflictDoUpdate({
           target: [mappingTemplates.organizationId, mappingTemplates.name],
@@ -98,7 +107,7 @@ export async function saveMapping(
             headers: diagnostic.headers,
             mapping,
             rules,
-            readOptions: options,
+            readOptions: effectiveOptions,
             version: sql`${mappingTemplates.version}+1`,
           },
         });

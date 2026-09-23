@@ -22,6 +22,8 @@ Après l'ajout des ZIP, le formatage, le lint, le typage, les **48 tests**, le b
 
 Après le relèvement à 50 Mo et l'ajout du transfert multipart, `npm run format:check`, lint, typage, **54 tests**, build et **9 parcours Playwright** passent. Le neuvième parcours dépose un CSV de près de 49 Mo, vérifie son diagnostic et le supprime. Le test multipart sur le vrai bucket Supabase a transféré 48 875 008 octets en dix parties, relu un SHA-256 identique puis supprimé l'objet. Un second essai a transféré 6,1 Mo depuis Chromium à travers le CORS réel, puis vérifié empreinte et suppression. Le PUT simple de 48,9 Mo avait échoué avec HTTP 524, d'où le passage au multipart.
 
+Sur la branche d'essai 200 Mo non déployée, un import local CSV de **199 040 027 octets / 40 000 lignes** a parcouru diagnostic, mapping, traitement et export avec PostgreSQL local. Le test d'intégration vérifie maintenant qu'un upload signé est diagnostiqué et haché en une seule lecture, et qu'un mapping aux options inchangées ne relit pas l'original. `npm run format:check`, lint, typage, **57 tests**, build et **9 parcours Playwright** passent. Aucun transfert Backblaze de 200 Mo ni traitement hébergé de ce volume n'est encore qualifié ; la limite déployée reste 50 Mo.
+
 ## Vérification du pilote hébergé
 
 - Les migrations Drizzle, dont l'ajout de `source_archives` et des références ZIP, ont été appliquées à la base Supabase via le pooler de session ; le bucket `catamotive-private` existe avec `public=false`.

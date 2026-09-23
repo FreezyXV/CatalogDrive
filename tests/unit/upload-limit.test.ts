@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  B2_TRIAL_UPLOAD_BYTES,
   DEFAULT_UPLOAD_BYTES,
   SMALL_UPLOAD_BYTES,
   SUPABASE_FREE_UPLOAD_BYTES,
@@ -33,8 +34,13 @@ describe("plafond de dépôt explicite", () => {
       totalBytes: 100 * 1024 * 1024,
     });
   });
-  it("refuse toute valeur non étudiée", () => {
+  it("autorise 200 Mo uniquement sur configuration explicite", () => {
     process.env.UPLOAD_MAX_BYTES = "200000000";
+    expect(uploadLimitBytes()).toBe(B2_TRIAL_UPLOAD_BYTES);
+    expect(uploadLimitLabel()).toBe("200 Mo");
+  });
+  it("refuse toute autre valeur non étudiée", () => {
+    process.env.UPLOAD_MAX_BYTES = "300000000";
     expect(() => uploadLimitBytes()).toThrow("UPLOAD_MAX_BYTES");
   });
 });
