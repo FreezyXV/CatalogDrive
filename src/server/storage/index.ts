@@ -17,6 +17,7 @@ import {
   CreateMultipartUploadCommand,
   UploadPartCommand,
   ListPartsCommand,
+  ListObjectVersionsCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
   S3Client,
@@ -138,6 +139,7 @@ export class LocalFileStore implements FileStore {
 export class S3FileStore implements FileStore {
   private client: S3Client;
   private tokenSecret: string;
+  private purgeVersions: boolean;
 
   constructor(
     private bucket: string,
@@ -151,6 +153,9 @@ export class S3FileStore implements FileStore {
   ) {
     this.uploadBucket = options.uploadBucket;
     this.tokenSecret = options.secretAccessKey;
+    this.purgeVersions = new URL(options.endpoint).hostname.endsWith(
+      ".backblazeb2.com",
+    );
     this.client = new S3Client({
       endpoint: options.endpoint,
       region: options.region,
@@ -387,11 +392,38 @@ export class S3FileStore implements FileStore {
   }
 
   async remove(key: string) {
-    await this.client.send(
-      new DeleteObjectCommand(
-        resolveS3Location(key, this.bucket, this.uploadBucket),
-      ),
-    );
+    const location = resolveS3Location(key, this.bucket, this.uploadBucket);
+    await this.client.send(new DeleteObjectCommand(location));
+    if (!this.purgeVersions) return;
+    const versions: string[] = [];
+    let keyMarker: string | undefined;
+    let versionIdMarker: string | undefined;
+    let truncated: boolean;
+    do {
+      const page = await this.client.send(
+        new ListObjectVersionsCommand({
+          Bucket: location.Bucket,
+          Prefix: location.Key,
+          KeyMarker: keyMarker,
+          VersionIdMarker: versionIdMarker,
+        }),
+      );
+      for (const item of [
+        ...(page.Versions ?? []),
+        ...(page.DeleteMarkers ?? []),
+      ])
+        if (item.Key === location.Key && item.VersionId)
+          versions.push(item.VersionId);
+      truncated = page.IsTruncated ?? false;
+      keyMarker = page.NextKeyMarker;
+      versionIdMarker = page.NextVersionIdMarker;
+      if (truncated && !keyMarker)
+        throw new Error("Liste des versions B2 incomplète.");
+    } while (truncated);
+    for (const versionId of versions)
+      await this.client.send(
+        new DeleteObjectCommand({ ...location, VersionId: versionId }),
+      );
   }
 
   async signedUrl(key: string, filename: string) {

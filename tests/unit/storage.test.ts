@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import {
+  DeleteObjectCommand,
+  ListObjectVersionsCommand,
+} from "@aws-sdk/client-s3";
+import {
   LocalFileStore,
   S3FileStore,
   resolveS3Location,
@@ -132,5 +136,37 @@ describe("routage S3 des imports", () => {
     } finally {
       await iterator.return?.();
     }
+  });
+  it("purge les versions cachées d’un objet B2 sans toucher aux autres clés", async () => {
+    const store = new S3FileStore("catalogues", {
+      endpoint: "https://s3.eu-central-003.backblazeb2.com",
+      region: "eu-central-003",
+      accessKeyId: "test",
+      secretAccessKey: "test",
+    });
+    const key = `${randomUUID()}/${randomUUID()}`;
+    const deleted: (string | undefined)[] = [];
+    Object.defineProperty(store, "client", {
+      value: {
+        send: async (command: unknown) => {
+          if (command instanceof DeleteObjectCommand) {
+            deleted.push(command.input.VersionId);
+            return {};
+          }
+          if (command instanceof ListObjectVersionsCommand)
+            return {
+              Versions: [
+                { Key: key, VersionId: "original" },
+                { Key: `${key}-other`, VersionId: "unrelated" },
+              ],
+              DeleteMarkers: [{ Key: key, VersionId: "marker" }],
+              IsTruncated: false,
+            };
+          throw new Error("Commande S3 inattendue");
+        },
+      },
+    });
+    await store.remove(key);
+    expect(deleted).toEqual([undefined, "original", "marker"]);
   });
 });
