@@ -27,6 +27,7 @@ async function multipartCommand(
 export async function transferInParts(
   file: File,
   onProgress: (percent: number) => void,
+  { partTimeoutMs = 45_000 }: { partTimeoutMs?: number } = {},
 ) {
   const started = await multipartCommand(
     { action: "start", bytes: file.size },
@@ -57,6 +58,7 @@ export async function transferInParts(
           const transferred = await fetch(signed.data.url, {
             method: "PUT",
             body: file.slice(start, start + partBytes),
+            signal: AbortSignal.timeout(partTimeoutMs),
           });
           if (!transferred.ok)
             throw new Error(`Partie ${number} refusée par le stockage.`);

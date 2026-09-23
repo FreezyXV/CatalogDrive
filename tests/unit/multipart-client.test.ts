@@ -79,4 +79,33 @@ describe("transfert multipart dans le navigateur", () => {
     expect(retries).toBe(3);
     expect(aborted).toBe(true);
   });
+
+  it("relance puis annule un PUT qui ne répond jamais", async () => {
+    let attempts = 0;
+    let aborted = false;
+    vi.stubGlobal("fetch", async (input: string, init: RequestInit) => {
+      if (input === "/api/uploads/multipart") {
+        const body = JSON.parse(String(init.body));
+        if (body.action === "start")
+          return Response.json({ token: "test", partBytes });
+        if (body.action === "part")
+          return Response.json({ url: `https://store.test/${body.number}` });
+        if (body.action === "abort") {
+          aborted = true;
+          return Response.json({ ok: true });
+        }
+        if (body.action === "complete")
+          throw new Error("Une session bloquée ne doit pas être terminée.");
+      }
+      attempts++;
+      return await new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      });
+    });
+    await expect(
+      transferInParts(file(), () => undefined, { partTimeoutMs: 10 }),
+    ).rejects.toThrow();
+    expect(attempts).toBeGreaterThanOrEqual(3);
+    expect(aborted).toBe(true);
+  });
 });
