@@ -3,7 +3,18 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import { LocalFileStore, resolveS3Location } from "../../src/server/storage";
+import { Readable } from "node:stream";
+import {
+  DeleteObjectCommand,
+  AbortMultipartUploadCommand,
+  ListMultipartUploadsCommand,
+  ListObjectVersionsCommand,
+} from "@aws-sdk/client-s3";
+import {
+  LocalFileStore,
+  S3FileStore,
+  resolveS3Location,
+} from "../../src/server/storage";
 import { SMALL_UPLOAD_BYTES } from "../../src/domain/upload-limit";
 const dirs: string[] = [];
 async function storage() {
@@ -95,5 +106,125 @@ describe("routage S3 des imports", () => {
     expect(() =>
       resolveS3Location("incoming/../secret", "archive", "uploads"),
     ).toThrow("Clé de stockage");
+  });
+  it("ralentit la lecture distante lorsque le consommateur est en pause", async () => {
+    const store = new S3FileStore("catalogues", {
+      endpoint: "https://s3.example.test",
+      region: "eu-central-003",
+      accessKeyId: "test",
+      secretAccessKey: "test",
+    });
+    let pulled = 0;
+    Object.defineProperty(store, "client", {
+      value: {
+        send: async () => ({
+          Body: Readable.from(
+            (async function* () {
+              for (let index = 0; index < 256; index++) {
+                pulled++;
+                yield Buffer.alloc(64 * 1024);
+              }
+            })(),
+          ),
+        }),
+      },
+    });
+    const stream = store.read(`${randomUUID()}/${randomUUID()}`);
+    const iterator = stream[Symbol.asyncIterator]();
+    try {
+      expect((await iterator.next()).value).toHaveLength(64 * 1024);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(pulled).toBeLessThan(64);
+    } finally {
+      await iterator.return?.();
+    }
+  });
+  it("purge les versions cachées d’un objet B2 sans toucher aux autres clés", async () => {
+    const store = new S3FileStore("catalogues", {
+      endpoint: "https://s3.eu-central-003.backblazeb2.com",
+      region: "eu-central-003",
+      accessKeyId: "test",
+      secretAccessKey: "test",
+    });
+    const key = `${randomUUID()}/${randomUUID()}`;
+    const deleted: (string | undefined)[] = [];
+    Object.defineProperty(store, "client", {
+      value: {
+        send: async (command: unknown) => {
+          if (command instanceof DeleteObjectCommand) {
+            deleted.push(command.input.VersionId);
+            return {};
+          }
+          if (command instanceof ListObjectVersionsCommand)
+            return {
+              Versions: [
+                { Key: key, VersionId: "original" },
+                { Key: `${key}-other`, VersionId: "unrelated" },
+              ],
+              DeleteMarkers: [{ Key: key, VersionId: "marker" }],
+              IsTruncated: false,
+            };
+          throw new Error("Commande S3 inattendue");
+        },
+      },
+    });
+    await store.remove(key);
+    expect(deleted).toEqual([undefined, "original", "marker"]);
+  });
+  it("abandonne seulement les transferts incomplets de CataMotive vieux de deux heures", async () => {
+    const store = new S3FileStore("archives", {
+      endpoint: "https://s3.eu-central-003.backblazeb2.com",
+      region: "eu-central-003",
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      uploadBucket: "incoming",
+    });
+    const oldKey = `${randomUUID()}/${randomUUID()}`;
+    const recentKey = `${randomUUID()}/${randomUUID()}`;
+    const aborted: string[] = [];
+    let pages = 0;
+    Object.defineProperty(store, "client", {
+      value: {
+        send: async (command: unknown) => {
+          if (command instanceof ListMultipartUploadsCommand) {
+            expect(command.input.Bucket).toBe("incoming");
+            pages++;
+            return pages === 1
+              ? {
+                  Uploads: [
+                    {
+                      Key: oldKey,
+                      UploadId: "stale",
+                      Initiated: new Date(Date.now() - 3 * 60 * 60 * 1000),
+                    },
+                    {
+                      Key: recentKey,
+                      UploadId: "active",
+                      Initiated: new Date(),
+                    },
+                    {
+                      Key: "someone-else",
+                      UploadId: "foreign",
+                      Initiated: new Date(0),
+                    },
+                  ],
+                  IsTruncated: true,
+                  NextKeyMarker: oldKey,
+                  NextUploadIdMarker: "stale",
+                }
+              : { Uploads: [], IsTruncated: false };
+          }
+          if (command instanceof AbortMultipartUploadCommand) {
+            expect(command.input.Bucket).toBe("incoming");
+            aborted.push(command.input.UploadId!);
+            return {};
+          }
+          throw new Error("Commande S3 inattendue");
+        },
+      },
+    });
+    expect(await store.cleanupAbandonedMultipartUploads()).toBe(1);
+    expect(pages).toBe(2);
+    expect(aborted).toEqual(["stale"]);
   });
 });

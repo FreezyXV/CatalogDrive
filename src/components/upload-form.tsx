@@ -24,7 +24,11 @@ async function multipartCommand(
   return { response, data };
 }
 
-async function transferInParts(file: File) {
+export async function transferInParts(
+  file: File,
+  onProgress: (percent: number) => void,
+  { partTimeoutMs = 45_000 }: { partTimeoutMs?: number } = {},
+) {
   const started = await multipartCommand(
     { action: "start", bytes: file.size },
     true,
@@ -35,11 +39,14 @@ async function transferInParts(file: File) {
     partBytes: number;
   };
   try {
-    for (
-      let start = 0, number = 1;
-      start < file.size;
-      start += partBytes, number++
-    ) {
+    if (!Number.isSafeInteger(partBytes) || partBytes <= 0)
+      throw new Error("Taille des parties de transfert invalide.");
+    const partCount = Math.ceil(file.size / partBytes);
+    let nextPart = 1;
+    let completedBytes = 0;
+    let stopped = false;
+    const uploadPart = async (number: number) => {
+      const start = (number - 1) * partBytes;
       let lastError: unknown;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
@@ -51,6 +58,7 @@ async function transferInParts(file: File) {
           const transferred = await fetch(signed.data.url, {
             method: "PUT",
             body: file.slice(start, start + partBytes),
+            signal: AbortSignal.timeout(partTimeoutMs),
           });
           if (!transferred.ok)
             throw new Error(`Partie ${number} refusée par le stockage.`);
@@ -58,10 +66,31 @@ async function transferInParts(file: File) {
           break;
         } catch (error) {
           lastError = error;
+          if (attempt < 2)
+            await new Promise((resolve) =>
+              setTimeout(resolve, 500 * (attempt + 1)),
+            );
         }
       }
       if (lastError) throw lastError;
-    }
+      completedBytes += Math.min(partBytes, file.size - start);
+      onProgress(Math.floor((completedBytes / file.size) * 100));
+    };
+    const workers = Array.from({ length: Math.min(4, partCount) }, async () => {
+      while (!stopped) {
+        const number = nextPart++;
+        if (number > partCount) return;
+        try {
+          await uploadPart(number);
+        } catch (error) {
+          stopped = true;
+          throw error;
+        }
+      }
+    });
+    const results = await Promise.allSettled(workers);
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
     const completed = await multipartCommand({ action: "complete", token });
     return completed.data.key as string;
   } catch (error) {
@@ -80,6 +109,7 @@ export function UploadForm({
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const router = useRouter();
@@ -105,10 +135,14 @@ export function UploadForm({
     if (!file) return;
     setPending(true);
     setError("");
+    setProgress(null);
     try {
       let response: Response;
       const multipartKey =
-        file.size > 5 * 1024 * 1024 ? await transferInParts(file) : null;
+        file.size > 5 * 1024 * 1024
+          ? await transferInParts(file, setProgress)
+          : null;
+      if (!multipartKey) setProgress(null);
       if (multipartKey) {
         response = await fetch("/api/imports", {
           method: "POST",
@@ -150,6 +184,7 @@ export function UploadForm({
       router.push(data.count > 1 ? "/dashboard" : `/imports/${data.id}`);
       router.refresh();
     } catch (error) {
+      setProgress(null);
       setError(
         error instanceof Error
           ? error.message
@@ -204,6 +239,12 @@ export function UploadForm({
           CSV, XLSX ou ZIP de plusieurs catalogues · {maxLabel} maximum par
           fichier déposé
         </small>
+        {maxBytes > 50_000_000 && (
+          <small>
+            Pour les ZIP : 100 Mio décompressés au total. Pour les XLSX : 64 Mio
+            décompressés avant analyse.
+          </small>
+        )}
       </div>
       {file && (
         <div className="selected-file">
@@ -238,10 +279,22 @@ export function UploadForm({
           {error}
         </p>
       )}
+      {progress !== null && (
+        <progress
+          className="upload-progress"
+          max={100}
+          value={progress}
+          aria-label="Progression du transfert"
+        />
+      )}
       <div className="upload-form-footer">
         <p role="status">
           {pending
-            ? "Transfert et analyse en cours. Cela peut prendre quelques instants."
+            ? progress === null
+              ? "Transfert et analyse en cours. Cela peut prendre quelques instants."
+              : progress < 100
+                ? `Transfert du fichier : ${progress} %. Gardez cette page ouverte.`
+                : "Transfert terminé. Analyse du fichier en cours."
             : "L’analyse ne modifie aucune donnée de votre fichier."}
         </p>
         <button className="button primary" disabled={!file || pending}>
@@ -250,7 +303,11 @@ export function UploadForm({
           ) : (
             <ArrowRight size={18} />
           )}
-          {pending ? "Analyse en cours…" : "Analyser le fichier"}
+          {pending
+            ? progress !== null && progress < 100
+              ? "Transfert en cours…"
+              : "Analyse en cours…"
+            : "Analyser le fichier"}
         </button>
       </div>
     </form>

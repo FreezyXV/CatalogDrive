@@ -1028,6 +1028,13 @@ tbody tr:hover {
   color: #7b8e93;
   margin-top: 6px;
 }
+.upload-progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+  margin-top: 20px;
+  accent-color: #367c78;
+}
 .upload-form-footer {
   margin-top: 24px;
   display: flex;
