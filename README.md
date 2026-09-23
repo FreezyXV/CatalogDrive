@@ -68,7 +68,7 @@ CRON_SECRET=une-valeur-aleatoire-d-au-moins-32-caracteres
 
 4. Déployer avec le preset Next.js. Le cron quotidien de [vercel.json](vercel.json) applique la durée de conservation configurée par organisation.
 
-Le projet Vercel relié à ce dépôt est `catalog-drive` dans l’équipe `ivans-projects-66d9a97b`. Le projet `catalog-drive-gbla` construit un autre dépôt et ne doit pas recevoir les variables de CataMotive. Les variables `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` ne sont pas utilisées par l’application actuelle : elle accède à PostgreSQL côté serveur et à Supabase Storage via l’adaptateur S3.
+Le projet Vercel relié à ce dépôt est `catalog-drive` dans l’équipe `ivans-projects-66d9a97b`. Les variables `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` ne sont pas utilisées par l’application actuelle : elle accède à PostgreSQL côté serveur et à Supabase Storage via l’adaptateur S3.
 
 En production S3, le navigateur reçoit une URL d’upload signée valable 5 minutes vers le bucket plafonné. Le serveur relit le fichier, vérifie taille, empreinte et format avant de créer l’import. Les téléchargements utilisent des URL signées d’une minute après contrôle de la session et de l’organisation. Les fichiers source déjà stockés dans `catamotive-private` restent lisibles.
 

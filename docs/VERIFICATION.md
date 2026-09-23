@@ -30,6 +30,7 @@ Le 23 septembre, `npm run check` a de nouveau réussi : lint, typage, 43 tests e
 - Après désactivation de la protection SSO Vercel, `/`, `/inscription`, `/connexion` et `/tarifs` répondent `200` sans authentification Vercel. `/dashboard` redirige vers `/connexion` sans session CataMotive.
 - Les deux alias Vercel publics sont autorisés explicitement pour les requêtes de mutation ; en production, un `POST` invalide depuis chaque domaine donne `400` et une origine voisine ou absente donne `403`.
 - L'authentification applique une limite supplémentaire par IP de confiance fournie par Vercel : 10 inscriptions ou 60 tentatives de connexion par heure et par réseau. Un test PostgreSQL valide le dépassement ; la protection n'est pas considérée suffisante à elle seule contre des réseaux distribués.
+- Sur la version `d8b9ef1` déployée publiquement, un compte temporaire a parcouru inscription, tableau de bord, URL signée vers `catamotive-uploads`, transfert CSV, import, diagnostic, téléchargement identique, suppression et déconnexion. Le compte et l'objet ont été supprimés ; les deux buckets ne contenaient plus d'objet de test lors de la vérification.
 
 ## Preuves fonctionnelles
 
