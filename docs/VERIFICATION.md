@@ -6,21 +6,23 @@ Le parcours métier demandé fonctionne localement de bout en bout avec PostgreS
 
 ## Contrôles exécutés
 
-| Contrôle                           | Résultat                                                                      |
-| ---------------------------------- | ----------------------------------------------------------------------------- |
-| `npm run format:check`             | Formatage Prettier validé                                                     |
-| `npm run lint`                     | Aucune erreur ni avertissement ESLint                                         |
-| `npm run typecheck`                | TypeScript strict validé                                                      |
-| `npm test`                         | **43 tests réussis** sur 8 fichiers                                           |
-| `npm run build`                    | Build Next.js 16/Webpack réussi, 21 routes/pages compilées                    |
-| `npm run test:e2e`                 | **7 parcours Chrome** : CSV, isolation, refus, mobile, métier complet et XLSX |
-| `npm audit --audit-level=moderate` | 0 vulnérabilité après remplacement de la dépendance UUID transitive           |
+| Contrôle                           | Résultat                                                                   |
+| ---------------------------------- | -------------------------------------------------------------------------- |
+| `npm run format:check`             | Formatage Prettier validé                                                  |
+| `npm run lint`                     | Aucune erreur ni avertissement ESLint                                      |
+| `npm run typecheck`                | TypeScript strict validé                                                   |
+| `npm test`                         | **48 tests réussis** sur 9 fichiers                                        |
+| `npm run build`                    | Build Next.js 16/Webpack réussi, 21 routes/pages compilées                 |
+| `npm run test:e2e`                 | **8 parcours Chrome** : CSV, ZIP, isolation, refus, mobile, métier et XLSX |
+| `npm audit --audit-level=moderate` | 0 vulnérabilité après remplacement de la dépendance UUID transitive        |
 
 Le 23 septembre, `npm run check` a de nouveau réussi : lint, typage, 43 tests et build. Les 7 parcours Playwright ont également été relancés après le durcissement du stockage et de l'inscription.
 
+Après l'ajout des ZIP, le formatage, le lint, le typage, les **48 tests**, le build et les **8 parcours Playwright** passent. Le test ZIP du navigateur dépose deux CSV et télécharge l'archive originale à l'octet près. Un test PostgreSQL importe un CSV et un XLSX du même ZIP, vérifie l'isolation et la suppression de l'archive après le dernier import ; un autre vérifie l'annulation complète après une entrée invalide.
+
 ## Vérification du pilote hébergé
 
-- Les deux migrations Drizzle ont été appliquées à la base Supabase via le pooler de session ; le bucket `catamotive-private` existe avec `public=false`.
+- Les migrations Drizzle, dont l'ajout de `source_archives` et des références ZIP, ont été appliquées à la base Supabase via le pooler de session ; le bucket `catamotive-private` existe avec `public=false`.
 - Le protocole S3 est actif. Une écriture, une lecture et une suppression directes ont réussi avec la paire de clés du projet. Le précontrôle CORS depuis le domaine Vercel autorise `PUT` et `Content-Type`. Le bucket privé `catamotive-uploads` a été créé avec une limite serveur de 5 Mio : un objet de 16 octets est accepté et un objet de 5 Mio + 1 octet est refusé avec `EntityTooLarge` (HTTP 413).
 - Le preset Vercel a été corrigé de `Other` à `Next.js`. Le build redeployé répond `200` sur `/`, `/inscription`, `/connexion` et `/tarifs` ; `/dashboard` redirige vers la connexion sans session.
 - Un compte temporaire a été créé sur le déploiement protégé. Le tableau de bord a répondu `200`, une URL d’upload signée a été émise, le CSV a été transféré directement vers S3, puis l’import et son diagnostic ont répondu `201` et `200`.
@@ -31,6 +33,7 @@ Le 23 septembre, `npm run check` a de nouveau réussi : lint, typage, 43 tests e
 - Les deux alias Vercel publics sont autorisés explicitement pour les requêtes de mutation ; en production, un `POST` invalide depuis chaque domaine donne `400` et une origine voisine ou absente donne `403`.
 - L'authentification applique une limite supplémentaire par IP de confiance fournie par Vercel : 10 inscriptions ou 60 tentatives de connexion par heure et par réseau. Un test PostgreSQL valide le dépassement ; la protection n'est pas considérée suffisante à elle seule contre des réseaux distribués.
 - Sur la version `d8b9ef1` déployée publiquement, un compte temporaire a parcouru inscription, tableau de bord, URL signée vers `catamotive-uploads`, transfert CSV, import, diagnostic, téléchargement identique, suppression et déconnexion. Le compte et l'objet ont été supprimés ; les deux buckets ne contenaient plus d'objet de test lors de la vérification.
+- La version `13e04b0` a été poussée sur `main` et la nouvelle route `/api/imports/[id]/archive` répond `401` sans session en production, ce qui confirme son déploiement et sa protection. Un dépôt ZIP complet n'a pas encore été répété sur l'hébergement ; le parcours complet ZIP a été exécuté localement avec PostgreSQL réel.
 
 ## Preuves fonctionnelles
 
@@ -46,6 +49,7 @@ Le 23 septembre, `npm run check` a de nouveau réussi : lint, typage, 43 tests e
 - Deux organisations ne peuvent ni lire, télécharger, modifier ni supprimer leurs données respectives. Une relation inter-organisation est aussi refusée par PostgreSQL.
 - La vue mobile 390 × 844 ne déborde pas horizontalement ; les tableaux gardent leur propre défilement.
 - La suppression d’un import retire original, exports et rapports.
+- Un ZIP conserve sa provenance par entrée et l'archive originale jusqu'au retrait du dernier import issu du lot.
 
 ## Sécurité et exploitation vérifiées dans le code
 
@@ -65,6 +69,7 @@ Le 23 septembre, `npm run check` a de nouveau réussi : lint, typage, 43 tests e
 - Les invitations d’équipe ne sont pas incluses dans les critères d’acceptation fonctionnels de ce MVP.
 - Le XLSX est chargé en mémoire seulement après un préflight plafonnant le contenu décompressé à 64 Mio. Cette décision contourne un défaut du lecteur streaming ExcelJS sur certains ordres d’entrées ZIP et reste compatible avec la limite d’upload de 5 Mio.
 - Vercel exécute le traitement dans la requête, avec `maxDuration=300`. Les volumes supérieurs au MVP doivent passer sur un worker durable.
+- Les ZIP sont actuellement limités à 5 Mio compressés, 20 entrées CSV/XLSX, 5 Mio par entrée et 100 Mio décompressés au total. La cible de 1 Gio par fichier n'est pas encore disponible ; voir [COMMERCIALISATION.md](COMMERCIALISATION.md).
 
 ## Avant exploitation commerciale
 
