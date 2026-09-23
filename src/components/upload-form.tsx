@@ -237,6 +237,12 @@ export function UploadForm({
           CSV, XLSX ou ZIP de plusieurs catalogues · {maxLabel} maximum par
           fichier déposé
         </small>
+        {maxBytes > 50_000_000 && (
+          <small>
+            Pour les ZIP : 100 Mio décompressés au total. Pour les XLSX : 64 Mio
+            décompressés avant analyse.
+          </small>
+        )}
       </div>
       {file && (
         <div className="selected-file">
