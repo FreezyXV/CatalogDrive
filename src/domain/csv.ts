@@ -4,7 +4,6 @@ import { pipeline } from "node:stream/promises";
 import type { ReadOptions } from "./catalog";
 
 export const LIMITS = {
-  bytes: 5 * 1024 * 1024,
   rows: 50_000,
   columns: 200,
   recordSize: 65_536,

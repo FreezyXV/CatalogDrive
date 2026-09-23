@@ -236,7 +236,7 @@ test("refus explicites : origine, session, XLSX, binaire, CSV cassé, taille et 
     (
       await request.post("/api/imports", {
         headers: { Origin: origin, "X-File-Name": "large.csv" },
-        data: Buffer.alloc(5 * 1024 * 1024 + 1, "a"),
+        data: Buffer.alloc(50_000_001, "a"),
       })
     ).status(),
   ).toBe(413);

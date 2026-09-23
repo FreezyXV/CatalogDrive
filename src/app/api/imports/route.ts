@@ -6,8 +6,9 @@ import {
   importZip,
 } from "@/server/imports";
 import { checkOrigin, errorResponse, HttpError, readJson } from "@/server/http";
-import { LIMITS } from "@/domain/csv";
+import { uploadLimitBytes, uploadLimitLabel } from "@/domain/upload-limit";
 export const runtime = "nodejs";
+export const maxDuration = 300;
 export async function POST(request: Request) {
   try {
     checkOrigin(request);
@@ -35,8 +36,11 @@ export async function POST(request: Request) {
         { status: 201 },
       );
     }
-    if (Number(request.headers.get("content-length") || 0) > LIMITS.bytes)
-      throw new HttpError(413, "Le fichier dépasse la limite de 5 Mio.");
+    if (Number(request.headers.get("content-length") || 0) > uploadLimitBytes())
+      throw new HttpError(
+        413,
+        `Le fichier dépasse la limite de ${uploadLimitLabel()}.`,
+      );
     let filename: string;
     try {
       filename = decodeURIComponent(request.headers.get("x-file-name") ?? "");

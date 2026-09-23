@@ -1,20 +1,40 @@
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, open, rm } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
-import { randomUUID, createHash } from "node:crypto";
+import {
+  randomUUID,
+  createHash,
+  createHmac,
+  timingSafeEqual,
+} from "node:crypto";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  ListPartsCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { LIMITS, ImportError } from "@/domain/csv";
+import { ImportError } from "@/domain/csv";
+import { uploadLimitBytes, uploadLimitLabel } from "@/domain/upload-limit";
 
 export type StoredFile = { key: string; bytes: number; sha256: string };
+export const MULTIPART_PART_BYTES = 5 * 1024 * 1024;
+type MultipartSession = {
+  key: string;
+  uploadId: string;
+  bytes: number;
+  organizationId: string;
+  expiresAt: number;
+};
 export function resolveS3Location(
   key: string,
   bucket: string,
@@ -39,6 +59,20 @@ export interface FileStore {
   remove(key: string): Promise<void>;
   signedUrl?(key: string, filename: string): Promise<string>;
   signedUpload?(organizationId: string): Promise<{ key: string; url: string }>;
+  beginMultipartUpload?(
+    organizationId: string,
+    bytes: number,
+  ): Promise<{ token: string; partBytes: number }>;
+  signMultipartPart?(
+    organizationId: string,
+    token: string,
+    partNumber: number,
+  ): Promise<string>;
+  finishMultipartUpload?(
+    organizationId: string,
+    token: string,
+  ): Promise<string>;
+  abortMultipartUpload?(organizationId: string, token: string): Promise<void>;
 }
 export class LocalFileStore implements FileStore {
   constructor(private root: string) {}
@@ -50,7 +84,7 @@ export class LocalFileStore implements FileStore {
   async put(
     organizationId: string,
     body: ReadableStream<Uint8Array>,
-    maxBytes: number = LIMITS.bytes,
+    maxBytes: number = uploadLimitBytes(),
   ): Promise<StoredFile> {
     const key = `${organizationId}/${randomUUID()}`;
     const path = this.path(key);
@@ -63,7 +97,7 @@ export class LocalFileStore implements FileStore {
         if (bytes > maxBytes)
           return callback(
             new ImportError(
-              `Le fichier dépasse la limite de ${Math.round(maxBytes / 1024 / 1024)} Mio.`,
+              `Le fichier dépasse la limite de ${uploadLimitLabel(maxBytes)}.`,
             ),
           );
         hash.update(chunk);
@@ -103,6 +137,7 @@ export class LocalFileStore implements FileStore {
 
 export class S3FileStore implements FileStore {
   private client: S3Client;
+  private tokenSecret: string;
 
   constructor(
     private bucket: string,
@@ -115,6 +150,7 @@ export class S3FileStore implements FileStore {
     },
   ) {
     this.uploadBucket = options.uploadBucket;
+    this.tokenSecret = options.secretAccessKey;
     this.client = new S3Client({
       endpoint: options.endpoint,
       region: options.region,
@@ -128,10 +164,169 @@ export class S3FileStore implements FileStore {
 
   private uploadBucket?: string;
 
+  private encodeSession(session: MultipartSession) {
+    const payload = Buffer.from(JSON.stringify(session)).toString("base64url");
+    const signature = createHmac("sha256", this.tokenSecret)
+      .update(payload)
+      .digest("base64url");
+    return `${payload}.${signature}`;
+  }
+
+  private decodeSession(
+    organizationId: string,
+    token: string,
+    allowExpired = false,
+  ) {
+    const [payload, signature, extra] = token.split(".");
+    if (!payload || !signature || extra || token.length > 2048)
+      throw new ImportError("Session de transfert invalide.");
+    const expected = createHmac("sha256", this.tokenSecret)
+      .update(payload)
+      .digest();
+    const provided = Buffer.from(signature, "base64url");
+    if (
+      provided.length !== expected.length ||
+      !timingSafeEqual(provided, expected)
+    )
+      throw new ImportError("Session de transfert invalide.");
+    let session: MultipartSession;
+    try {
+      session = JSON.parse(Buffer.from(payload, "base64url").toString());
+    } catch {
+      throw new ImportError("Session de transfert invalide.");
+    }
+    if (
+      session.organizationId !== organizationId ||
+      (!allowExpired && session.expiresAt < Date.now()) ||
+      !Number.isSafeInteger(session.bytes) ||
+      session.bytes < 1 ||
+      session.bytes > uploadLimitBytes() ||
+      typeof session.uploadId !== "string" ||
+      !session.uploadId ||
+      !session.key.startsWith(`incoming/${organizationId}/`)
+    )
+      throw new ImportError("Session de transfert invalide ou expirée.");
+    resolveS3Location(session.key, this.bucket, this.uploadBucket);
+    return session;
+  }
+
+  async beginMultipartUpload(organizationId: string, bytes: number) {
+    if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > uploadLimitBytes())
+      throw new ImportError(
+        `Le fichier dépasse la limite de ${uploadLimitLabel()}.`,
+      );
+    const key = `incoming/${organizationId}/${randomUUID()}`;
+    const { Bucket, Key } = resolveS3Location(
+      key,
+      this.bucket,
+      this.uploadBucket,
+    );
+    const created = await this.client.send(
+      new CreateMultipartUploadCommand({
+        Bucket,
+        Key,
+        ContentType: "application/octet-stream",
+      }),
+    );
+    if (!created.UploadId) throw new Error("Session S3 non créée.");
+    return {
+      token: this.encodeSession({
+        key,
+        uploadId: created.UploadId,
+        bytes,
+        organizationId,
+        expiresAt: Date.now() + 60 * 60 * 1000,
+      }),
+      partBytes: MULTIPART_PART_BYTES,
+    };
+  }
+
+  async signMultipartPart(
+    organizationId: string,
+    token: string,
+    partNumber: number,
+  ) {
+    const session = this.decodeSession(organizationId, token);
+    const expectedParts = Math.ceil(session.bytes / MULTIPART_PART_BYTES);
+    if (
+      !Number.isInteger(partNumber) ||
+      partNumber < 1 ||
+      partNumber > expectedParts
+    )
+      throw new ImportError("Numéro de partie invalide.");
+    return getSignedUrl(
+      this.client,
+      new UploadPartCommand({
+        ...resolveS3Location(session.key, this.bucket, this.uploadBucket),
+        UploadId: session.uploadId,
+        PartNumber: partNumber,
+      }),
+      { expiresIn: 600 },
+    );
+  }
+
+  async finishMultipartUpload(organizationId: string, token: string) {
+    const session = this.decodeSession(organizationId, token);
+    const location = resolveS3Location(
+      session.key,
+      this.bucket,
+      this.uploadBucket,
+    );
+    const listed = await this.client.send(
+      new ListPartsCommand({ ...location, UploadId: session.uploadId }),
+    );
+    const parts = listed.Parts ?? [];
+    const expectedParts = Math.ceil(session.bytes / MULTIPART_PART_BYTES);
+    if (parts.length !== expectedParts || listed.IsTruncated)
+      throw new ImportError("Le transfert est incomplet.");
+    for (let index = 0; index < expectedParts; index++) {
+      if (
+        parts[index].PartNumber !== index + 1 ||
+        (parts[index].Size !== undefined &&
+          parts[index].Size !==
+            (index === expectedParts - 1
+              ? session.bytes - index * MULTIPART_PART_BYTES
+              : MULTIPART_PART_BYTES)) ||
+        !parts[index].ETag
+      )
+        throw new ImportError("Les parties transférées sont invalides.");
+    }
+    await this.client.send(
+      new CompleteMultipartUploadCommand({
+        ...location,
+        UploadId: session.uploadId,
+        MultipartUpload: {
+          Parts: parts.map((part) => ({
+            ETag: part.ETag,
+            PartNumber: part.PartNumber,
+          })),
+        },
+      }),
+    );
+    const finalObject = await this.client.send(new HeadObjectCommand(location));
+    if (finalObject.ContentLength !== session.bytes) {
+      await this.remove(session.key).catch(() => undefined);
+      throw new ImportError(
+        "La taille du fichier transféré ne correspond pas.",
+      );
+    }
+    return session.key;
+  }
+
+  async abortMultipartUpload(organizationId: string, token: string) {
+    const session = this.decodeSession(organizationId, token, true);
+    await this.client.send(
+      new AbortMultipartUploadCommand({
+        ...resolveS3Location(session.key, this.bucket, this.uploadBucket),
+        UploadId: session.uploadId,
+      }),
+    );
+  }
+
   async put(
     organizationId: string,
     body: ReadableStream<Uint8Array>,
-    maxBytes: number = LIMITS.bytes,
+    maxBytes: number = uploadLimitBytes(),
   ): Promise<StoredFile> {
     const key = `${organizationId}/${randomUUID()}`;
     const hash = createHash("sha256");
@@ -142,7 +337,7 @@ export class S3FileStore implements FileStore {
         if (bytes > maxBytes)
           return callback(
             new ImportError(
-              `Le fichier dépasse la limite de ${Math.round(maxBytes / 1024 / 1024)} Mio.`,
+              `Le fichier dépasse la limite de ${uploadLimitLabel(maxBytes)}.`,
             ),
           );
         hash.update(chunk);

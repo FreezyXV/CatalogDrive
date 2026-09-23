@@ -188,6 +188,29 @@ describe("compte et import sur PostgreSQL réel", () => {
       "import.deleted",
     ]);
   });
+  it("analyse un CSV proche de 50 Mo avec le plafond Supabase Free activé", async () => {
+    const previous = process.env.UPLOAD_MAX_BYTES;
+    process.env.UPLOAD_MAX_BYTES = "50000000";
+    try {
+      const row = `REF;${"A".repeat(1950)}\n`;
+      const body = Buffer.from(`ref;nom\n${row.repeat(25_000)}`);
+      expect(body.length).toBeGreaterThan(45_000_000);
+      expect(body.length).toBeLessThan(50_000_000);
+      const id = await importCsv(
+        actorA,
+        "grand-catalogue.csv",
+        new Blob([new Uint8Array(body)]).stream(),
+        store,
+      );
+      const imported = await getImport(actorA, id);
+      expect(imported.file.sizeBytes).toBe(body.length);
+      expect(imported.job.diagnostic.rowCount).toBe(25_000);
+      await removeImport(actorA, id, store);
+    } finally {
+      if (previous === undefined) delete process.env.UPLOAD_MAX_BYTES;
+      else process.env.UPLOAD_MAX_BYTES = previous;
+    }
+  });
   it("importe un ZIP CSV/XLSX en deux catalogues et préserve l’archive jusqu’au dernier retrait", async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("Catalogue");

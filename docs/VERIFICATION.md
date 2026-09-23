@@ -6,24 +6,26 @@ Le parcours métier demandé fonctionne localement de bout en bout avec PostgreS
 
 ## Contrôles exécutés
 
-| Contrôle                           | Résultat                                                                   |
-| ---------------------------------- | -------------------------------------------------------------------------- |
-| `npm run format:check`             | Formatage Prettier validé                                                  |
-| `npm run lint`                     | Aucune erreur ni avertissement ESLint                                      |
-| `npm run typecheck`                | TypeScript strict validé                                                   |
-| `npm test`                         | **48 tests réussis** sur 9 fichiers                                        |
-| `npm run build`                    | Build Next.js 16/Webpack réussi, 21 routes/pages compilées                 |
-| `npm run test:e2e`                 | **8 parcours Chrome** : CSV, ZIP, isolation, refus, mobile, métier et XLSX |
-| `npm audit --audit-level=moderate` | 0 vulnérabilité après remplacement de la dépendance UUID transitive        |
+| Contrôle                           | Résultat                                                                          |
+| ---------------------------------- | --------------------------------------------------------------------------------- |
+| `npm run format:check`             | Formatage Prettier validé                                                         |
+| `npm run lint`                     | Aucune erreur ni avertissement ESLint                                             |
+| `npm run typecheck`                | TypeScript strict validé                                                          |
+| `npm test`                         | **54 tests réussis** sur 10 fichiers                                              |
+| `npm run build`                    | Build Next.js 16/Webpack réussi                                                   |
+| `npm run test:e2e`                 | **9 parcours Chrome** : CSV, ZIP, isolation, refus, mobile, métier, XLSX et 49 Mo |
+| `npm audit --audit-level=moderate` | 0 vulnérabilité après remplacement de la dépendance UUID transitive               |
 
 Le 23 septembre, `npm run check` a de nouveau réussi : lint, typage, 43 tests et build. Les 7 parcours Playwright ont également été relancés après le durcissement du stockage et de l'inscription.
 
 Après l'ajout des ZIP, le formatage, le lint, le typage, les **48 tests**, le build et les **8 parcours Playwright** passent. Le test ZIP du navigateur dépose deux CSV et télécharge l'archive originale à l'octet près. Un test PostgreSQL importe un CSV et un XLSX du même ZIP, vérifie l'isolation et la suppression de l'archive après le dernier import ; un autre vérifie l'annulation complète après une entrée invalide.
 
+Après le relèvement à 50 Mo et l'ajout du transfert multipart, `npm run format:check`, lint, typage, **54 tests**, build et **9 parcours Playwright** passent. Le neuvième parcours dépose un CSV de près de 49 Mo, vérifie son diagnostic et le supprime. Le test multipart sur le vrai bucket Supabase a transféré 48 875 008 octets en dix parties, relu un SHA-256 identique puis supprimé l'objet. Un second essai a transféré 6,1 Mo depuis Chromium à travers le CORS réel, puis vérifié empreinte et suppression. Le PUT simple de 48,9 Mo avait échoué avec HTTP 524, d'où le passage au multipart.
+
 ## Vérification du pilote hébergé
 
 - Les migrations Drizzle, dont l'ajout de `source_archives` et des références ZIP, ont été appliquées à la base Supabase via le pooler de session ; le bucket `catamotive-private` existe avec `public=false`.
-- Le protocole S3 est actif. Une écriture, une lecture et une suppression directes ont réussi avec la paire de clés du projet. Le précontrôle CORS depuis le domaine Vercel autorise `PUT` et `Content-Type`. Le bucket privé `catamotive-uploads` a été créé avec une limite serveur de 5 Mio : un objet de 16 octets est accepté et un objet de 5 Mio + 1 octet est refusé avec `EntityTooLarge` (HTTP 413).
+- Le protocole S3 est actif. Une écriture, une lecture et une suppression directes ont réussi avec la paire de clés du projet. Le précontrôle CORS depuis le domaine Vercel autorise `PUT` et `Content-Type`. Le bucket privé `catamotive-uploads` avait initialement une limite serveur de 5 Mio, avec un refus `EntityTooLarge` (HTTP 413) au-delà. Sa limite a été relevée à 50 Mo le 23 septembre et un objet de 48 875 008 octets a été vérifié et supprimé.
 - Le preset Vercel a été corrigé de `Other` à `Next.js`. Le build redeployé répond `200` sur `/`, `/inscription`, `/connexion` et `/tarifs` ; `/dashboard` redirige vers la connexion sans session.
 - Un compte temporaire a été créé sur le déploiement protégé. Le tableau de bord a répondu `200`, une URL d’upload signée a été émise, le CSV a été transféré directement vers S3, puis l’import et son diagnostic ont répondu `201` et `200`.
 - Le téléchargement signé a rendu les octets originaux à l’identique. La suppression de l’import a répondu `200`, l’API a ensuite rendu `404`, et l’objet S3 était absent. La déconnexion a répondu `200` et le tableau de bord a de nouveau redirigé. Le compte et l’organisation de test ont été supprimés de la base.
@@ -56,7 +58,7 @@ Après l'ajout des ZIP, le formatage, le lint, le typage, les **48 tests**, le b
 - Mots de passe scrypt salés ; jetons de session aléatoires stockés hachés ; cookie HttpOnly/SameSite/Secure configurable ; contrôle Origin et limitation des tentatives.
 - Validation Zod des commandes, tailles HTTP et limites de parser ; noms et clés de fichiers contrôlés.
 - Préflight XLSX contre chiffrement, macros, liens externes, embeddings, traversée de chemin et expansion excessive.
-- Upload direct S3 signé 5 minutes et téléchargements signés 1 minute après autorisation. Le serveur recalcule taille et SHA-256 avant de persister un upload direct.
+- Upload direct S3 signé 5 minutes pour les petits fichiers ; au-delà de 5 Mio, parties signées 10 minutes, session liée à l'organisation et à la taille annoncée, vérification des parties et de la taille finale. Téléchargements signés 1 minute après autorisation. Le serveur recalcule taille et SHA-256 avant de persister un upload direct.
 - Stockage local hors `public`; secrets dans l’environnement ; `.env*`, fichiers, rapports et sorties de tests ignorés par Git.
 - Job PostgreSQL réclamé atomiquement avec verrou consultatif, heartbeat, trois tentatives et écritures par lots.
 - Rétention configurable de 7 à 365 jours et tâche Vercel quotidienne protégée par `CRON_SECRET`.
@@ -67,9 +69,9 @@ Après l'ajout des ZIP, le formatage, le lint, le typage, les **48 tests**, le b
 - Le paiement est volontairement absent ; la page Tarifs n’effectue aucun débit.
 - Aucune API CMS n’est simulée. Les sorties sont des fichiers d’import validés d’après les schémas publics, à requalifier lorsqu’un CMS modifie son format.
 - Les invitations d’équipe ne sont pas incluses dans les critères d’acceptation fonctionnels de ce MVP.
-- Le XLSX est chargé en mémoire seulement après un préflight plafonnant le contenu décompressé à 64 Mio. Cette décision contourne un défaut du lecteur streaming ExcelJS sur certains ordres d’entrées ZIP et reste compatible avec la limite d’upload de 5 Mio.
+- Le XLSX est chargé en mémoire seulement après un préflight plafonnant le contenu décompressé à 64 Mio. Cette décision contourne un défaut du lecteur streaming ExcelJS sur certains ordres d’entrées ZIP ; les fichiers XLSX de 50 Mo proches du plafond ne sont pas tous garantis.
 - Vercel exécute le traitement dans la requête, avec `maxDuration=300`. Les volumes supérieurs au MVP doivent passer sur un worker durable.
-- Les ZIP sont actuellement limités à 5 Mio compressés, 20 entrées CSV/XLSX, 5 Mio par entrée et 100 Mio décompressés au total. La cible de 1 Gio par fichier n'est pas encore disponible ; voir [COMMERCIALISATION.md](COMMERCIALISATION.md).
+- Les ZIP sont actuellement limités à 50 Mo compressés, 20 entrées CSV/XLSX, 50 Mo par entrée et 100 Mio décompressés au total. La cible de 1 Gio par fichier n'est pas encore disponible ; voir [COMMERCIALISATION.md](COMMERCIALISATION.md).
 
 ## Avant exploitation commerciale
 

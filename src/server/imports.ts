@@ -17,9 +17,10 @@ import {
 } from "./db/schema";
 import type { Identity } from "./auth";
 import { getFileStore, type FileStore, type StoredFile } from "./storage";
-import { ImportError, LIMITS, type Diagnostic } from "@/domain/csv";
+import { ImportError, type Diagnostic } from "@/domain/csv";
+import { uploadLimitBytes, uploadLimitLabel } from "@/domain/upload-limit";
 import { inspectSource } from "./source";
-import { forEachCatalogArchiveEntry, PILOT_ARCHIVE_LIMITS } from "./archives";
+import { forEachCatalogArchiveEntry, activeArchiveLimits } from "./archives";
 import { HttpError } from "./http";
 import { createHash } from "node:crypto";
 
@@ -65,8 +66,10 @@ async function verifySignedSource(
   for await (const chunk of store.read(storageKey)) {
     const buffer = Buffer.from(chunk as Uint8Array);
     bytes += buffer.length;
-    if (bytes > LIMITS.bytes)
-      throw new ImportError("Le fichier dépasse la limite de 5 Mio.");
+    if (bytes > uploadLimitBytes())
+      throw new ImportError(
+        `Le fichier dépasse la limite de ${uploadLimitLabel()}.`,
+      );
     hash.update(buffer);
   }
   if (!bytes) throw new ImportError("Le fichier est vide.");
@@ -218,7 +221,7 @@ async function importStoredArchive(
     );
     await forEachCatalogArchiveEntry(
       path,
-      PILOT_ARCHIVE_LIMITS,
+      activeArchiveLimits(),
       async (entry, stream, maxBytes) => {
         const stored = await store.put(
           actor.organizationId,

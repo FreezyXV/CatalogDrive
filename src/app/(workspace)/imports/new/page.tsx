@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft, Check, Download, Info, LockKeyhole } from "lucide-react";
 import { UploadForm } from "@/components/upload-form";
+import { uploadLimitBytes, uploadLimitLabel } from "@/domain/upload-limit";
 export default function NewImport() {
   return (
     <>
@@ -28,7 +29,10 @@ export default function NewImport() {
             </div>
             <span className="format-tag">.CSV · .XLSX · .ZIP</span>
           </div>
-          <UploadForm />
+          <UploadForm
+            maxBytes={uploadLimitBytes()}
+            maxLabel={uploadLimitLabel()}
+          />
         </section>
         <aside className="import-aside">
           <section className="panel guidance">

@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import type { Readable } from "node:stream";
 import yauzl from "yauzl";
 import { ImportError } from "@/domain/csv";
+import { uploadLimitBytes } from "@/domain/upload-limit";
 
 export type ArchiveEntry = {
   name: string;
@@ -20,6 +21,14 @@ export const PILOT_ARCHIVE_LIMITS: ArchiveLimits = {
   entryBytes: 5 * 1024 * 1024,
   totalBytes: 100 * 1024 * 1024,
 };
+
+export function activeArchiveLimits(): ArchiveLimits {
+  return {
+    entries: 20,
+    entryBytes: uploadLimitBytes(),
+    totalBytes: 100 * 1024 * 1024,
+  };
+}
 
 function validEntryName(name: string) {
   if (

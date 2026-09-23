@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { LocalFileStore, resolveS3Location } from "../../src/server/storage";
-import { LIMITS } from "../../src/domain/csv";
+import { SMALL_UPLOAD_BYTES } from "../../src/domain/upload-limit";
 const dirs: string[] = [];
 async function storage() {
   const dir = await mkdtemp(join(tmpdir(), "catamotive-test-"));
@@ -32,6 +32,8 @@ describe("stockage local réel", () => {
   });
   it("refuse réellement un flux > 5 Mio et retire son fichier partiel", async () => {
     const { store, org, dir } = await storage();
+    const previous = process.env.UPLOAD_MAX_BYTES;
+    process.env.UPLOAD_MAX_BYTES = String(SMALL_UPLOAD_BYTES);
     let count = 0;
     const body = new ReadableStream<Uint8Array>({
       pull(controller) {
@@ -39,14 +41,41 @@ describe("stockage local réel", () => {
         else controller.close();
       },
     });
-    await expect(store.put(org, body)).rejects.toThrow("5 Mio");
-    expect(await readdir(join(dir, org))).toEqual([]);
+    try {
+      await expect(store.put(org, body)).rejects.toThrow("5 Mio");
+      expect(await readdir(join(dir, org))).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.UPLOAD_MAX_BYTES;
+      else process.env.UPLOAD_MAX_BYTES = previous;
+    }
+  });
+  it("accepte un fichier de 6 Mio avec le plafond explicite de 50 Mo", async () => {
+    const { store, org } = await storage();
+    const previous = process.env.UPLOAD_MAX_BYTES;
+    process.env.UPLOAD_MAX_BYTES = "50000000";
+    try {
+      const data = Buffer.concat([
+        Buffer.from("ref;nom\n"),
+        Buffer.alloc(6 * 1024 * 1024, 65),
+      ]);
+      const saved = await store.put(
+        org,
+        new Blob([new Uint8Array(data)]).stream(),
+      );
+      expect(saved.bytes).toBeGreaterThan(5 * 1024 * 1024);
+      expect(saved.sha256).toBe(
+        createHash("sha256").update(data).digest("hex"),
+      );
+      await store.remove(saved.key);
+    } finally {
+      if (previous === undefined) delete process.env.UPLOAD_MAX_BYTES;
+      else process.env.UPLOAD_MAX_BYTES = previous;
+    }
   });
   it("refuse le fichier vide et les clés de traversée", async () => {
     const { store, org } = await storage();
     await expect(store.put(org, new Blob([]).stream())).rejects.toThrow("vide");
     expect(() => store.read("../../secret")).toThrow("Clé");
-    expect(LIMITS.bytes).toBe(5 * 1024 * 1024);
   });
 });
 describe("routage S3 des imports", () => {
