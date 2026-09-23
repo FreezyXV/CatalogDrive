@@ -44,10 +44,10 @@ Le fichier [public/demo/fournisseur-demo.csv](public/demo/fournisseur-demo.csv) 
 
 ## Déploiement Vercel + Supabase
 
-Le pilote est déployé sur Vercel avec PostgreSQL et Storage Supabase. Son [domaine de production](https://catalog-drive-ivans-projects-66d9a97b.vercel.app) est accessible publiquement. Aucun secret n’est commité. Les limites avant exploitation commerciale sont détaillées dans [docs/VERIFICATION.md](docs/VERIFICATION.md).
+Le pilote est déployé sur Vercel avec PostgreSQL et Storage Supabase. Son [domaine de production](https://catalog-drive.vercel.app/) est accessible publiquement. Aucun secret n’est commité. Les conditions de commercialisation sont détaillées dans [docs/COMMERCIALISATION.md](docs/COMMERCIALISATION.md).
 
 1. Dans Supabase, appliquer `npm run db:migrate` avec `DATABASE_URL` pointant vers la base du projet. Pour Vercel, utiliser de préférence l’URL du pooler Supabase compatible IPv4.
-2. Créer un bucket privé `catamotive-private`, activer le protocole S3 et créer une paire de clés S3. Vérifier le précontrôle CORS des requêtes `PUT` directes depuis l’origine Vercel.
+2. Créer deux buckets privés : `catamotive-private` pour les exports et les objets historiques, et `catamotive-uploads` pour les nouveaux fichiers source. Plafonner ce dernier à **5 Mio côté Supabase**, activer le protocole S3 et créer une paire de clés S3. Vérifier qu’un `PUT` de 5 Mio + 1 octet est refusé et que le précontrôle CORS autorise les transferts depuis l’origine Vercel.
 3. Configurer dans Vercel :
 
 ```text
@@ -60,6 +60,7 @@ STORAGE_DRIVER=s3
 S3_ENDPOINT=https://fifzvqbrepohffamxyap.storage.supabase.co/storage/v1/s3
 S3_REGION=eu-central-1
 S3_BUCKET=catamotive-private
+S3_UPLOAD_BUCKET=catamotive-uploads
 S3_ACCESS_KEY_ID=...
 S3_SECRET_ACCESS_KEY=...
 CRON_SECRET=une-valeur-aleatoire-d-au-moins-32-caracteres
@@ -69,7 +70,7 @@ CRON_SECRET=une-valeur-aleatoire-d-au-moins-32-caracteres
 
 Le projet Vercel relié à ce dépôt est `catalog-drive` dans l’équipe `ivans-projects-66d9a97b`. Le projet `catalog-drive-gbla` construit un autre dépôt et ne doit pas recevoir les variables de CataMotive. Les variables `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` ne sont pas utilisées par l’application actuelle : elle accède à PostgreSQL côté serveur et à Supabase Storage via l’adaptateur S3.
 
-En production S3, le navigateur reçoit une URL d’upload signée valable 5 minutes. Le serveur relit le fichier, vérifie taille, empreinte et format avant de créer l’import. Les téléchargements utilisent des URL signées d’une minute après contrôle de la session et de l’organisation.
+En production S3, le navigateur reçoit une URL d’upload signée valable 5 minutes vers le bucket plafonné. Le serveur relit le fichier, vérifie taille, empreinte et format avant de créer l’import. Les téléchargements utilisent des URL signées d’une minute après contrôle de la session et de l’organisation. Les fichiers source déjà stockés dans `catamotive-private` restent lisibles.
 
 ## Commandes de validation
 

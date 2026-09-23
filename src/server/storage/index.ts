@@ -15,6 +15,19 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { LIMITS, ImportError } from "@/domain/csv";
 
 export type StoredFile = { key: string; bytes: number; sha256: string };
+export function resolveS3Location(
+  key: string,
+  bucket: string,
+  uploadBucket?: string,
+) {
+  const incoming = key.startsWith("incoming/");
+  const objectKey = incoming ? key.slice("incoming/".length) : key;
+  if (!/^[a-f0-9-]{36}\/[a-f0-9-]{36}$/.test(objectKey))
+    throw new Error("Clé de stockage invalide");
+  if (incoming && !uploadBucket)
+    throw new Error("Bucket d’upload non configuré");
+  return { Bucket: incoming ? uploadBucket! : bucket, Key: objectKey };
+}
 export interface FileStore {
   put(
     organizationId: string,
@@ -98,8 +111,10 @@ export class S3FileStore implements FileStore {
       region: string;
       accessKeyId: string;
       secretAccessKey: string;
+      uploadBucket?: string;
     },
   ) {
+    this.uploadBucket = options.uploadBucket;
     this.client = new S3Client({
       endpoint: options.endpoint,
       region: options.region,
@@ -111,10 +126,7 @@ export class S3FileStore implements FileStore {
     });
   }
 
-  private assertKey(key: string) {
-    if (!/^[a-f0-9-]{36}\/[a-f0-9-]{36}$/.test(key))
-      throw new Error("Clé de stockage invalide");
-  }
+  private uploadBucket?: string;
 
   async put(
     organizationId: string,
@@ -157,11 +169,9 @@ export class S3FileStore implements FileStore {
   }
 
   async sample(key: string) {
-    this.assertKey(key);
     const result = await this.client.send(
       new GetObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
+        ...resolveS3Location(key, this.bucket, this.uploadBucket),
         Range: "bytes=0-65535",
       }),
     );
@@ -170,10 +180,10 @@ export class S3FileStore implements FileStore {
   }
 
   read(key: string) {
-    this.assertKey(key);
+    const location = resolveS3Location(key, this.bucket, this.uploadBucket);
     const output = new Readable({ read() {} });
     void this.client
-      .send(new GetObjectCommand({ Bucket: this.bucket, Key: key }))
+      .send(new GetObjectCommand(location))
       .then((result) => {
         if (!result.Body) return output.destroy(new Error("Objet introuvable"));
         const source = result.Body as NodeJS.ReadableStream;
@@ -186,20 +196,19 @@ export class S3FileStore implements FileStore {
   }
 
   async remove(key: string) {
-    this.assertKey(key);
     await this.client.send(
-      new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+      new DeleteObjectCommand(
+        resolveS3Location(key, this.bucket, this.uploadBucket),
+      ),
     );
   }
 
   async signedUrl(key: string, filename: string) {
-    this.assertKey(key);
     const safeName = filename.replace(/["\r\n]/g, "_");
     return getSignedUrl(
       this.client,
       new GetObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
+        ...resolveS3Location(key, this.bucket, this.uploadBucket),
         ResponseContentDisposition: `attachment; filename="${safeName}"`,
       }),
       { expiresIn: 60 },
@@ -207,14 +216,14 @@ export class S3FileStore implements FileStore {
   }
 
   async signedUpload(organizationId: string) {
-    const key = `${organizationId}/${randomUUID()}`;
+    const objectKey = `${organizationId}/${randomUUID()}`;
     return {
-      key,
+      key: this.uploadBucket ? `incoming/${objectKey}` : objectKey,
       url: await getSignedUrl(
         this.client,
         new PutObjectCommand({
-          Bucket: this.bucket,
-          Key: key,
+          Bucket: this.uploadBucket ?? this.bucket,
+          Key: objectKey,
           ContentType: "application/octet-stream",
         }),
         { expiresIn: 300 },
@@ -240,6 +249,7 @@ export function getFileStore(): FileStore {
       region: process.env.S3_REGION!,
       accessKeyId: process.env.S3_ACCESS_KEY_ID!,
       secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
+      uploadBucket: process.env.S3_UPLOAD_BUCKET,
     });
   }
   if (process.env.STORAGE_DRIVER && process.env.STORAGE_DRIVER !== "local")

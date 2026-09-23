@@ -23,6 +23,8 @@ import {
 import {
   authenticate,
   limitAuth,
+  limitAuthNetwork,
+  networkAttemptKey,
   registerAccount,
 } from "../../src/server/auth";
 import {
@@ -103,6 +105,40 @@ describe("compte et import sur PostgreSQL réel", () => {
     await expect(
       authenticate(emailA, "mauvais mot de passe"),
     ).rejects.toMatchObject({ status: 401 });
+  });
+  it("plafonne les inscriptions par réseau fiable, même avec des emails différents", async () => {
+    const previous = process.env.VERCEL;
+    process.env.VERCEL = "1";
+    const ip = `2001:db8:${suffix.slice(0, 4)}::1`;
+    const request = new Request("https://catalog-drive.vercel.app/", {
+      headers: { "x-vercel-forwarded-for": ip },
+    });
+    const other = new Request("https://catalog-drive.vercel.app/", {
+      headers: {
+        "x-vercel-forwarded-for": `2001:db8:${suffix.slice(4, 8)}::1`,
+      },
+    });
+    const keys = [
+      networkAttemptKey(request, "register"),
+      networkAttemptKey(other, "register"),
+    ];
+    try {
+      for (let index = 0; index < 10; index++)
+        await limitAuthNetwork(request, "register");
+      await expect(limitAuthNetwork(request, "register")).rejects.toMatchObject(
+        {
+          status: 429,
+        },
+      );
+      await expect(
+        limitAuthNetwork(other, "register"),
+      ).resolves.toBeUndefined();
+    } finally {
+      for (const key of keys)
+        if (key) await db.delete(authAttempts).where(eq(authAttempts.key, key));
+      if (previous === undefined) delete process.env.VERCEL;
+      else process.env.VERCEL = previous;
+    }
   });
   it("ne crée pas d'organisation orpheline pour une adresse existante", async () => {
     const attemptedName = `Doublon-${suffix}`;

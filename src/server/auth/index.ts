@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { isIP } from "node:net";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { and, eq, gt, sql } from "drizzle-orm";
@@ -56,27 +57,64 @@ export async function requirePageIdentity() {
   if (!identity) redirect("/connexion");
   return identity;
 }
-export async function limitAuth(email: string) {
+async function limitAttempts(
+  key: string,
+  maximum: number,
+  minutes: number,
+  message: string,
+) {
   const [attempt] = await db
     .insert(authAttempts)
     .values({
-      key: hashToken(email),
+      key,
       count: 1,
-      resetAt: new Date(Date.now() + 15 * 60_000),
+      resetAt: new Date(Date.now() + minutes * 60_000),
     })
     .onConflictDoUpdate({
       target: authAttempts.key,
       set: {
         count: sql`CASE WHEN ${authAttempts.resetAt} < now() THEN 1 ELSE ${authAttempts.count} + 1 END`,
-        resetAt: sql`CASE WHEN ${authAttempts.resetAt} < now() THEN now() + interval '15 minutes' ELSE ${authAttempts.resetAt} END`,
+        resetAt: sql`CASE WHEN ${authAttempts.resetAt} < now() THEN now() + (${minutes} * interval '1 minute') ELSE ${authAttempts.resetAt} END`,
       },
     })
     .returning();
-  if (attempt.count > 10)
-    throw new HttpError(
-      429,
-      "Trop de tentatives pour cette adresse. Réessayez dans 15 minutes.",
-    );
+  if (attempt.count > maximum) throw new HttpError(429, message);
+}
+export async function limitAuth(email: string) {
+  await limitAttempts(
+    hashToken(email),
+    10,
+    15,
+    "Trop de tentatives pour cette adresse. Réessayez dans 15 minutes.",
+  );
+}
+export function networkAttemptKey(
+  request: Request,
+  action: "login" | "register",
+) {
+  // Vercel replaces this header at its edge. Ignore caller-supplied headers
+  // when the app runs locally or outside that trusted proxy.
+  if (process.env.VERCEL !== "1") return null;
+  const candidate = request.headers
+    .get("x-vercel-forwarded-for")
+    ?.split(",")[0]
+    ?.trim();
+  const ip = candidate && isIP(candidate) ? candidate : "unknown";
+  return hashToken(`${action}:network:${ip}`);
+}
+export async function limitAuthNetwork(
+  request: Request,
+  action: "login" | "register",
+) {
+  const key = networkAttemptKey(request, action);
+  if (!key) return;
+  const maximum = action === "register" ? 10 : 60;
+  await limitAttempts(
+    key,
+    maximum,
+    60,
+    "Trop de tentatives depuis ce réseau. Réessayez dans une heure.",
+  );
 }
 export async function registerAccount(
   email: string,

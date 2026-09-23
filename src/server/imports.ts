@@ -111,7 +111,10 @@ export async function importSignedUpload(
     throw new ImportError(
       "Le nom du fichier est invalide ou trop long (180 caractères maximum).",
     );
-  if (!storageKey.startsWith(`${actor.organizationId}/`))
+  const objectKey = storageKey.startsWith("incoming/")
+    ? storageKey.slice("incoming/".length)
+    : storageKey;
+  if (!objectKey.startsWith(`${actor.organizationId}/`))
     throw new HttpError(403, "Clé d’upload non autorisée.");
   let bytes = 0;
   const hash = createHash("sha256");

@@ -3,6 +3,7 @@ import {
   authenticate,
   createSession,
   limitAuth,
+  limitAuthNetwork,
   logout,
   registerAccount,
 } from "@/server/auth";
@@ -41,6 +42,7 @@ export async function POST(
     const input = (action === "register" ? registration : credentials).parse(
       body,
     );
+    await limitAuthNetwork(request, action);
     await limitAuth(input.email);
     const actor =
       action === "register"

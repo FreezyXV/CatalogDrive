@@ -3,7 +3,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import { LocalFileStore } from "../../src/server/storage";
+import { LocalFileStore, resolveS3Location } from "../../src/server/storage";
 import { LIMITS } from "../../src/domain/csv";
 const dirs: string[] = [];
 async function storage() {
@@ -47,5 +47,24 @@ describe("stockage local réel", () => {
     await expect(store.put(org, new Blob([]).stream())).rejects.toThrow("vide");
     expect(() => store.read("../../secret")).toThrow("Clé");
     expect(LIMITS.bytes).toBe(5 * 1024 * 1024);
+  });
+});
+describe("routage S3 des imports", () => {
+  it("garde les anciens objets et isole les nouveaux uploads dans le bucket plafonné", () => {
+    const key = `${randomUUID()}/${randomUUID()}`;
+    expect(resolveS3Location(key, "archive", "uploads")).toEqual({
+      Bucket: "archive",
+      Key: key,
+    });
+    expect(resolveS3Location(`incoming/${key}`, "archive", "uploads")).toEqual({
+      Bucket: "uploads",
+      Key: key,
+    });
+    expect(() => resolveS3Location(`incoming/${key}`, "archive")).toThrow(
+      "Bucket d’upload",
+    );
+    expect(() =>
+      resolveS3Location("incoming/../secret", "archive", "uploads"),
+    ).toThrow("Clé de stockage");
   });
 });

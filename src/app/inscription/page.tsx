@@ -20,7 +20,7 @@ export default function Register() {
           Déjà un compte ? <Link href="/connexion">Se connecter</Link>
         </p>
       </div>
-      <span className="fine-print">CataMotive · Pilote local, jalon 1</span>
+      <span className="fine-print">CataMotive · Pilote public gratuit</span>
     </main>
   );
 }
