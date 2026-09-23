@@ -36,6 +36,7 @@ Après le relèvement à 50 Mo et l'ajout du transfert multipart, `npm run forma
 - L'authentification applique une limite supplémentaire par IP de confiance fournie par Vercel : 10 inscriptions ou 60 tentatives de connexion par heure et par réseau. Un test PostgreSQL valide le dépassement ; la protection n'est pas considérée suffisante à elle seule contre des réseaux distribués.
 - Sur la version `d8b9ef1` déployée publiquement, un compte temporaire a parcouru inscription, tableau de bord, URL signée vers `catamotive-uploads`, transfert CSV, import, diagnostic, téléchargement identique, suppression et déconnexion. Le compte et l'objet ont été supprimés ; les deux buckets ne contenaient plus d'objet de test lors de la vérification.
 - La version `13e04b0` a été poussée sur `main` et la nouvelle route `/api/imports/[id]/archive` répond `401` sans session en production, ce qui confirme son déploiement et sa protection. Un dépôt ZIP complet n'a pas encore été répété sur l'hébergement ; le parcours complet ZIP a été exécuté localement avec PostgreSQL réel.
+- La version `742ba9b` a été déployée avec succès sur `catalog-drive.vercel.app` : accueil `200`, nouvelle route multipart `401` sans session. Un compte temporaire a déposé un CSV de **48 875 008 octets** par le navigateur, obtenu le diagnostic sous la limite visible de **50 Mo**, puis supprimé l'import. Le compte et ses données de test ont été retirés ; un comptage de vérification ne trouve plus d'organisation de test.
 
 ## Preuves fonctionnelles
 
