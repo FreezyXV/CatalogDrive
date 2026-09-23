@@ -15,6 +15,13 @@
       "when": 1790085616392,
       "tag": "0001_amused_triathlon",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790124696153,
+      "tag": "0002_common_cerise",
+      "breakpoints": true
     }
   ]
 }

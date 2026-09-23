@@ -44,6 +44,11 @@ export default async function ImportPage({
             <FileSpreadsheet size={18} />
             {file.originalName}
           </p>
+          {job.archiveEntry && (
+            <p className="fine-print">
+              Entrée de l’archive : {job.archiveEntry}
+            </p>
+          )}
         </div>
         <a className="button secondary" href={`/api/imports/${id}/original`}>
           <Download size={17} />
@@ -211,6 +216,13 @@ export default async function ImportPage({
           </Link>
         </section>
       </div>
+      {job.archiveId && (
+        <p>
+          <a className="button secondary" href={`/api/imports/${id}/archive`}>
+            <Download size={17} /> Télécharger l’archive ZIP d’origine
+          </a>
+        </p>
+      )}
       <DeleteImport id={id} />
     </>
   );

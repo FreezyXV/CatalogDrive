@@ -31,3 +31,18 @@ Une vente accompagnée avec facturation manuelle évite l'intégration du paieme
 - Définir l'entité vendeuse, les documents contractuels et le contact d'exploitation.
 
 Ne pas présenter le pilote public actuel comme un service commercial prêt tant que les critères P0 applicables ne sont pas satisfaits et revérifiés sur le domaine définitif.
+
+## Import ZIP et objectif 1 Gio
+
+Le premier incrément ZIP est disponible dans le code : une archive de **5 Mio compressés maximum** et **20 fichiers CSV/XLSX maximum** produit un import distinct par fichier. Chaque entrée reste limitée à 5 Mio et le total décompressé à 100 Mio. Les chemins dangereux, liens symboliques, entrées chiffrées et formats annexes sont refusés. L'archive originale et les fichiers extraits sont conservés ; une erreur d'entrée annule le lot entier. Les tests d'intégration couvrent l'extraction CSV/XLSX, l'isolation des organisations, l'archive identique et le nettoyage.
+
+La cible demandée est **1 Gio par fichier déposé**, ainsi que **1 Gio maximum par entrée décompressée** d'un ZIP. Elle n'est pas atteinte par cet incrément. Le bucket actuel est plafonné à 5 Mio, Supabase Free plafonne un objet à 50 Mo, l'import initial s'exécute dans une fonction Vercel, ExcelJS charge les classeurs en mémoire, et le traitement métier conserve toutes les lignes dans PostgreSQL. Augmenter une constante de taille exposerait le service à des échecs et à des coûts imprévus.
+
+Jalons nécessaires, chacun avec un test de bout en bout :
+
+1. **Stockage et transfert** : offre de stockage permettant 1 Gio par objet, bucket privé dédié, upload S3 multipart signé et reprise des parties échouées. Vérifier 1 Gio transféré avec empreinte SHA-256 identique, annulation et purge des uploads abandonnés. Choix d'offre et coût à valider avant activation.
+2. **Ingestion asynchrone** : enregistrer un lot en base avant traitement, worker hébergé avec disque/temporaire et mémoire dimensionnés, états/progression/reprise idempotente. Vérifier un arrêt forcé puis redémarrage sans import double.
+3. **Formats à grande échelle** : CSV en flux, XLSX en lecture bornée ou déportée et ZIP avec bornes sur nombre d'entrées, taille de chaque entrée et expansion totale. Vérifier des CSV, XLSX et ZIP réels de 251 Mio puis jusqu'à 1 Gio, plus les archives corrompues et bombes de décompression.
+4. **Capacité métier** : quotas d'espace et de lignes, traitement des doublons sans index complet en mémoire, pagination et export en flux, surveillance du temps et des volumes PostgreSQL. Vérifier mapping, rapport qualité et export d'un grand catalogue représentatif, pas seulement son dépôt.
+
+Tant que ces critères ne passent pas dans l'environnement hébergé, l'interface doit continuer d'afficher la limite réellement vérifiée de 5 Mio.

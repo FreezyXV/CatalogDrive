@@ -7,8 +7,17 @@ import {
 import { randomUUID, createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import ExcelJS from "exceljs";
+import yazl from "yazl";
 const origin = "http://127.0.0.1:3100";
 const password = "mot-de-passe-e2e-local";
+async function makeZip(files: { name: string; body: Buffer }[]) {
+  const zip = new yazl.ZipFile();
+  for (const file of files) zip.addBuffer(file.body, file.name);
+  zip.end();
+  const chunks: Buffer[] = [];
+  for await (const chunk of zip.outputStream) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
 async function signup(page: Page, name: string) {
   const email = `${randomUUID()}@example.test`;
   await page.goto("/inscription");
@@ -32,6 +41,43 @@ async function apiSignup(request: APIRequestContext) {
   });
   expect(response.status()).toBe(201);
 }
+test("ZIP de deux CSV → deux imports visibles → archive d’origine téléchargeable", async ({
+  page,
+}) => {
+  await signup(page, "Atelier ZIP");
+  await page
+    .getByRole("link", { name: "Nouvel import", exact: true })
+    .last()
+    .click();
+  const archive = await makeZip([
+    {
+      name: "fournisseur-a/alpha.csv",
+      body: Buffer.from("ref;nom\nA1;Filtre\n"),
+    },
+    {
+      name: "fournisseur-b/beta.csv",
+      body: Buffer.from("ref;nom\nB2;Frein\n"),
+    },
+  ]);
+  await page.getByLabel("Fichier catalogue fournisseur").setInputFiles({
+    name: "fournisseurs.zip",
+    mimeType: "application/zip",
+    buffer: archive,
+  });
+  await page.getByRole("button", { name: "Analyser le fichier" }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByText("fournisseur-a/alpha.csv")).toBeVisible();
+  await expect(page.getByText("fournisseur-b/beta.csv")).toBeVisible();
+  await page.getByRole("link", { name: "Ouvrir alpha.csv" }).click();
+  await expect(page.getByText("A1", { exact: true })).toBeVisible();
+  const downloadPromise = page.waitForEvent("download");
+  await page
+    .getByRole("link", { name: "Télécharger l’archive ZIP d’origine" })
+    .click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("fournisseurs.zip");
+  expect(await readFile((await download.path())!)).toEqual(archive);
+});
 test("compte → import CSV → diagnostic → original identique → reconnexion → suppression", async ({
   page,
 }) => {

@@ -66,6 +66,29 @@ export const sessions = pgTable(
     }).onDelete("cascade"),
   ],
 );
+export const sourceArchives = pgTable(
+  "source_archives",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    createdBy: uuid("created_by").notNull(),
+    originalName: text("original_name").notNull(),
+    storageKey: text("storage_key").notNull().unique(),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text().notNull(),
+    entryCount: integer("entry_count").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique().on(t.id, t.organizationId),
+    foreignKey({
+      columns: [t.createdBy, t.organizationId],
+      foreignColumns: [memberships.userId, memberships.organizationId],
+    }),
+  ],
+);
 export const importJobs = pgTable(
   "import_jobs",
   {
@@ -74,6 +97,8 @@ export const importJobs = pgTable(
       .notNull()
       .references(() => organizations.id),
     createdBy: uuid("created_by").notNull(),
+    archiveId: uuid("archive_id"),
+    archiveEntry: text("archive_entry"),
     status: text().notNull().default("analyzed"),
     diagnostic: jsonb().$type<Diagnostic>().notNull(),
     readOptions: jsonb("read_options")
@@ -96,6 +121,10 @@ export const importJobs = pgTable(
     foreignKey({
       columns: [t.createdBy, t.organizationId],
       foreignColumns: [memberships.userId, memberships.organizationId],
+    }),
+    foreignKey({
+      columns: [t.archiveId, t.organizationId],
+      foreignColumns: [sourceArchives.id, sourceArchives.organizationId],
     }),
   ],
 );

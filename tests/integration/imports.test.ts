@@ -1,5 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import yazl from "yazl";
+import ExcelJS from "exceljs";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -17,6 +19,7 @@ import {
   memberships,
   organizations,
   sessions,
+  sourceArchives,
   uploadedFiles,
   users,
 } from "../../src/server/db/schema";
@@ -30,6 +33,9 @@ import {
 import {
   getImport,
   importCsv,
+  importZip,
+  importSignedArchive,
+  getSourceArchiveForImport,
   listImports,
   removeImport,
 } from "../../src/server/imports";
@@ -77,6 +83,9 @@ afterAll(async () => {
     await db
       .delete(importJobs)
       .where(eq(importJobs.organizationId, actor.organizationId));
+    await db
+      .delete(sourceArchives)
+      .where(eq(sourceArchives.organizationId, actor.organizationId));
     await db
       .delete(mappingTemplates)
       .where(eq(mappingTemplates.organizationId, actor.organizationId));
@@ -178,6 +187,102 @@ describe("compte et import sur PostgreSQL réel", () => {
       "import.created",
       "import.deleted",
     ]);
+  });
+  it("importe un ZIP CSV/XLSX en deux catalogues et préserve l’archive jusqu’au dernier retrait", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Catalogue");
+    sheet.addRow(["ref", "nom"]);
+    sheet.addRow(["X-002", "Pièce XLSX"]);
+    const zip = new yazl.ZipFile();
+    zip.addBuffer(Buffer.from("ref;nom\nC-001;Pièce CSV\n"), "a/catalogue.csv");
+    zip.addBuffer(
+      Buffer.from(await workbook.xlsx.writeBuffer()),
+      "b/catalogue.xlsx",
+    );
+    zip.end();
+    const chunks: Buffer[] = [];
+    for await (const chunk of zip.outputStream) chunks.push(Buffer.from(chunk));
+    const original = Buffer.concat(chunks);
+    const ids = await importZip(
+      actorA,
+      "fournisseurs.zip",
+      new Blob([new Uint8Array(original)]).stream(),
+      store,
+    );
+    expect(ids).toHaveLength(2);
+    const first = await getImport(actorA, ids[0]);
+    const second = await getImport(actorA, ids[1]);
+    expect(first.job.archiveEntry).toBe("a/catalogue.csv");
+    expect(first.job.diagnostic.preview[0].values[0]).toBe("C-001");
+    expect(second.job.archiveEntry).toBe("b/catalogue.xlsx");
+    expect(second.job.diagnostic.preview[0].values[0]).toBe("X-002");
+    const archive = await getSourceArchiveForImport(actorA, ids[0]);
+    await expect(
+      getSourceArchiveForImport(actorB, ids[0]),
+    ).rejects.toMatchObject({ status: 404 });
+    const restored: Buffer[] = [];
+    for await (const chunk of store.read(archive.storageKey))
+      restored.push(Buffer.from(chunk));
+    expect(Buffer.concat(restored)).toEqual(original);
+    await removeImport(actorA, ids[0], store);
+    expect(await store.sample(archive.storageKey)).toBeTruthy();
+    await removeImport(actorA, ids[1], store);
+    await expect(store.sample(archive.storageKey)).rejects.toThrow();
+    expect(
+      await db
+        .select()
+        .from(sourceArchives)
+        .where(eq(sourceArchives.id, archive.id)),
+    ).toHaveLength(0);
+  });
+  it("annule entièrement un ZIP si une entrée échoue après la première", async () => {
+    const zip = new yazl.ZipFile();
+    zip.addBuffer(Buffer.from("ref;nom\nA1;Valide\n"), "valide.csv");
+    zip.addBuffer(Buffer.from('ref;nom\nB2;"incomplet'), "invalide.csv");
+    zip.end();
+    const chunks: Buffer[] = [];
+    for await (const chunk of zip.outputStream) chunks.push(Buffer.from(chunk));
+    await expect(
+      importZip(
+        actorA,
+        "lot-invalide.zip",
+        new Blob([new Uint8Array(Buffer.concat(chunks))]).stream(),
+        store,
+      ),
+    ).rejects.toThrow("Lecture CSV");
+    expect(await listImports(actorA)).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(sourceArchives)
+        .where(eq(sourceArchives.organizationId, actorA.organizationId)),
+    ).toHaveLength(0);
+    expect(await readdir(join(root, actorA.organizationId))).toEqual([]);
+  });
+  it("un second traitement de la même clé signée ne détruit pas l’archive déjà importée", async () => {
+    const zip = new yazl.ZipFile();
+    zip.addBuffer(Buffer.from("ref;nom\nA1;Valide\n"), "catalogue.csv");
+    zip.end();
+    const chunks: Buffer[] = [];
+    for await (const chunk of zip.outputStream) chunks.push(Buffer.from(chunk));
+    const stored = await store.put(
+      actorA.organizationId,
+      new Blob([new Uint8Array(Buffer.concat(chunks))]).stream(),
+    );
+    const [id] = await importSignedArchive(
+      actorA,
+      "lot.zip",
+      stored.key,
+      store,
+    );
+    await expect(
+      importSignedArchive(actorA, "lot.zip", stored.key, store),
+    ).rejects.toThrow();
+    expect(await store.sample(stored.key)).toBeTruthy();
+    expect((await getImport(actorA, id)).job.archiveEntry).toBe(
+      "catalogue.csv",
+    );
+    await removeImport(actorA, id, store);
   });
   it("exécute réellement mapping, règles, rapport qualité et export téléchargeable", async () => {
     const id = await importCsv(

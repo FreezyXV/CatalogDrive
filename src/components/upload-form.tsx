@@ -19,9 +19,9 @@ export function UploadForm() {
   function choose(selected?: File) {
     if (!selected) return;
     setError("");
-    if (!/\.(csv|xlsx)$/i.test(selected.name)) {
+    if (!/\.(csv|xlsx|zip)$/i.test(selected.name)) {
       setFile(null);
-      setError("Choisissez un fichier CSV ou XLSX.");
+      setError("Choisissez un fichier CSV, XLSX ou ZIP.");
       return;
     }
     if (!selected.size || selected.size > MAX_BYTES) {
@@ -72,7 +72,7 @@ export function UploadForm() {
       }
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
-      router.push(`/imports/${data.id}`);
+      router.push(data.count > 1 ? "/dashboard" : `/imports/${data.id}`);
       router.refresh();
     } catch (error) {
       setError(
@@ -113,7 +113,7 @@ export function UploadForm() {
           id="catalog-file"
           type="file"
           aria-label="Fichier catalogue fournisseur"
-          accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          accept=".csv,.xlsx,.zip,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip"
           disabled={pending}
           onChange={(event) => choose(event.target.files?.[0])}
         />
@@ -125,7 +125,9 @@ export function UploadForm() {
         >
           Choisir un fichier
         </button>
-        <small>CSV ou XLSX · 5 Mio maximum · 50 000 lignes par feuille</small>
+        <small>
+          CSV, XLSX ou ZIP de plusieurs catalogues · 5 Mio compressés maximum
+        </small>
       </div>
       {file && (
         <div className="selected-file">

@@ -42,7 +42,7 @@ export default async function Dashboard() {
             vos données fournisseurs.
           </h2>
           <p>
-            Déposez un CSV ou XLSX. Mappez, normalisez, contrôlez
+            Déposez un CSV, XLSX ou ZIP. Mappez, normalisez, contrôlez
             <br className="desktop-break" /> puis exportez vers votre outil
             cible.
           </p>
@@ -128,7 +128,7 @@ export default async function Dashboard() {
               pour commencer à explorer vos données.
             </p>
             <Link href="/imports/new" className="button secondary">
-              Importer un CSV
+              Importer un fichier
               <ArrowRight size={16} />
             </Link>
             <a href="/demo/fournisseur-demo.csv" download className="demo-link">
@@ -165,6 +165,9 @@ export default async function Dashboard() {
                           <small>
                             {(job.diagnostic.format ?? "csv").toUpperCase()} ·{" "}
                             {job.diagnostic.headers.length} colonnes
+                            {job.archiveEntry
+                              ? ` · ZIP : ${job.archiveEntry}`
+                              : ""}
                           </small>
                         </span>
                       </Link>

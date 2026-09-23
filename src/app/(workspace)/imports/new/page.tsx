@@ -26,7 +26,7 @@ export default function NewImport() {
               <h2>Fichier fournisseur</h2>
               <p>Vos données originales restent intactes.</p>
             </div>
-            <span className="format-tag">.CSV · .XLSX</span>
+            <span className="format-tag">.CSV · .XLSX · .ZIP</span>
           </div>
           <UploadForm />
         </section>
@@ -77,7 +77,8 @@ export default function NewImport() {
       <div className="footnote">
         <Info size={15} />
         UTF-8, UTF-16LE avec BOM et Windows-1252 sont pris en charge. Les
-        classeurs chiffrés, macros et contenus externes sont refusés.
+        classeurs chiffrés, macros et contenus externes sont refusés. Un ZIP
+        crée un import distinct pour chaque CSV ou XLSX qu’il contient.
       </div>
     </>
   );
