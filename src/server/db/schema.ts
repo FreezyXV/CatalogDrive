@@ -211,6 +211,7 @@ export const processedRows = pgTable(
     unique().on(t.id, t.organizationId),
     unique().on(t.importId, t.runId, t.sourceLine),
     index("rows_import_status").on(t.organizationId, t.importId, t.status),
+    index("rows_import_line").on(t.organizationId, t.importId, t.sourceLine),
     foreignKey({
       name: "rows_import_org_fk",
       columns: [t.importId, t.organizationId],

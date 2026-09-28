@@ -27,12 +27,12 @@ afterEach(async () => {
 });
 
 describe("lecture des archives fournisseurs", () => {
-  it("extrait plusieurs CSV en flux, avec leurs noms et octets exacts", async () => {
+  it("extrait CSV et TSV en flux, avec leurs noms et octets exacts", async () => {
     const first = Buffer.from("ref;nom\n001;Pièce A\n");
-    const second = Buffer.from("sku,nom\n002,Pièce B\n");
+    const second = Buffer.from("sku\tnom\n002\tPièce B\n");
     const path = await archive([
       { name: "fournisseur-a/catalogue.csv", body: first },
-      { name: "fournisseur-b/catalogue.csv", body: second },
+      { name: "fournisseur-b/catalogue.tsv", body: second },
     ]);
     const seen: { name: string; filename: string; body: Buffer }[] = [];
     const result = await forEachCatalogArchiveEntry(
@@ -57,8 +57,8 @@ describe("lecture des archives fournisseurs", () => {
         body: first,
       },
       {
-        name: "fournisseur-b/catalogue.csv",
-        filename: "catalogue.csv",
+        name: "fournisseur-b/catalogue.tsv",
+        filename: "catalogue.tsv",
         body: second,
       },
     ]);
@@ -67,7 +67,7 @@ describe("lecture des archives fournisseurs", () => {
   it("refuse un contenu annexe et une expansion qui dépasse les bornes", async () => {
     const unsupported = await archive([
       { name: "catalogue.csv", body: Buffer.from("a;b\n1;2") },
-      { name: "note.txt", body: Buffer.from("secret") },
+      { name: "note.pdf", body: Buffer.from("secret") },
     ]);
     await expect(
       forEachCatalogArchiveEntry(
@@ -79,7 +79,7 @@ describe("lecture des archives fournisseurs", () => {
           return count;
         },
       ),
-    ).rejects.toThrow("note.txt");
+    ).rejects.toThrow("note.pdf");
 
     const oversized = await archive([
       { name: "catalogue.csv", body: Buffer.alloc(1024 * 1024, 65) },

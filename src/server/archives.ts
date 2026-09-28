@@ -1,3 +1,4 @@
+import { isCatalogFilename } from "@/domain/import-formats";
 import { basename } from "node:path";
 import type { Readable } from "node:stream";
 import yauzl from "yauzl";
@@ -88,9 +89,9 @@ export async function forEachCatalogArchiveEntry(
         );
       if (raw.generalPurposeBitFlag & 1)
         throw new ImportError("Les ZIP chiffrés ne sont pas pris en charge.");
-      if (!/\.(csv|xlsx)$/i.test(filename))
+      if (!isCatalogFilename(filename))
         throw new ImportError(
-          `Format non pris en charge dans le ZIP : ${filename}. Utilisez CSV ou XLSX.`,
+          `Format non pris en charge dans le ZIP : ${filename}. Utilisez CSV, TSV, TXT délimité, XLS, XLSX ou ODS.`,
         );
       entries++;
       if (entries > limits.entries)
@@ -118,7 +119,9 @@ export async function forEachCatalogArchiveEntry(
       total += actualBytes;
     }
     if (!entries)
-      throw new ImportError("Le ZIP ne contient aucun fichier CSV ou XLSX.");
+      throw new ImportError(
+        "Le ZIP ne contient aucun fichier CSV, TSV, TXT délimité, XLS, XLSX ou ODS.",
+      );
     return { entries, totalBytes: total };
   } catch (error) {
     if (error instanceof ImportError) throw error;

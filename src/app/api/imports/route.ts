@@ -48,7 +48,10 @@ export async function POST(request: Request) {
       throw new HttpError(400, "Nom de fichier invalide.");
     }
     if (!request.body)
-      throw new HttpError(400, "Choisissez un fichier CSV, XLSX ou ZIP.");
+      throw new HttpError(
+        400,
+        "Choisissez un fichier CSV, TSV, TXT délimité, XLS, XLSX, ODS ou ZIP.",
+      );
     if (/\.zip$/i.test(filename)) {
       const ids = await importZip(identity, filename, request.body);
       return Response.json({ id: ids[0], count: ids.length }, { status: 201 });

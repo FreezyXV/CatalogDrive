@@ -3,15 +3,11 @@ import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadOptions } from "./catalog";
 
-export const LIMITS = {
-  rows: 50_000,
-  columns: 200,
-  recordSize: 65_536,
-  preview: 20,
-} as const;
+import { LIMITS } from "./import-limits";
+export { LIMITS } from "./import-limits";
 export type Encoding = "utf-8" | "utf-16le" | "windows-1252";
 export type Diagnostic = {
-  format?: "csv" | "xlsx";
+  format?: "csv" | "xlsx" | "xls" | "ods";
   headerLine?: number;
   sheets?: string[];
   sheet?: string;

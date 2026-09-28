@@ -98,9 +98,11 @@ describe("diagnostic CSV déterministe", () => {
       analyze(Array(201).fill("a").join(";") + "\n1;2"),
     ).rejects.toThrow("200 colonnes");
   });
-  it("refuse plus de 50 000 lignes", async () => {
+  it("accepte 500 000 lignes et refuse la suivante", async () => {
+    const accepted = await analyze("a;b\n" + "1;2\n".repeat(LIMITS.rows));
+    expect(accepted.rowCount).toBe(500_000);
     await expect(
       analyze("a;b\n" + "1;2\n".repeat(LIMITS.rows + 1)),
     ).rejects.toThrow("lignes de données");
-  });
+  }, 30_000);
 });

@@ -85,7 +85,7 @@ export function MappingForm({
         headerLine: data.diagnostic.headerLine,
         sheet: data.diagnostic.sheet,
         delimiter:
-          data.diagnostic.format === "csv"
+          (data.diagnostic.format ?? "csv") === "csv"
             ? data.diagnostic.delimiter
             : undefined,
         encoding: data.diagnostic.encoding,
@@ -227,7 +227,7 @@ export function MappingForm({
               }
             />
           </label>
-          {diagnostic.format !== "xlsx" && (
+          {(diagnostic.format ?? "csv") === "csv" && (
             <>
               <label>
                 Encodage

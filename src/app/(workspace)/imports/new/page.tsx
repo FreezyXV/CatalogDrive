@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowLeft, Check, Download, Info, LockKeyhole } from "lucide-react";
+import { IMPORT_FORMAT_LABEL } from "@/domain/import-formats";
 import { UploadForm } from "@/components/upload-form";
 import { uploadLimitBytes, uploadLimitLabel } from "@/domain/upload-limit";
 export default function NewImport() {
@@ -27,7 +28,7 @@ export default function NewImport() {
               <h2>Fichier fournisseur</h2>
               <p>Vos données originales restent intactes.</p>
             </div>
-            <span className="format-tag">.CSV · .XLSX · .ZIP</span>
+            <span className="format-tag">{IMPORT_FORMAT_LABEL}</span>
           </div>
           <UploadForm
             maxBytes={uploadLimitBytes()}
@@ -82,7 +83,8 @@ export default function NewImport() {
         <Info size={15} />
         UTF-8, UTF-16LE avec BOM et Windows-1252 sont pris en charge. Les
         classeurs chiffrés, macros et contenus externes sont refusés. Un ZIP
-        crée un import distinct pour chaque CSV ou XLSX qu’il contient.
+        crée un import distinct pour chaque catalogue CSV, TSV, TXT, XLS, XLSX
+        ou ODS qu’il contient.
       </div>
     </>
   );

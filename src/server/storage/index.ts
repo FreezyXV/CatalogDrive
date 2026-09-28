@@ -17,6 +17,8 @@ import {
   CreateMultipartUploadCommand,
   UploadPartCommand,
   ListPartsCommand,
+  ListMultipartUploadsCommand,
+  ListObjectVersionsCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
   S3Client,
@@ -73,6 +75,7 @@ export interface FileStore {
     token: string,
   ): Promise<string>;
   abortMultipartUpload?(organizationId: string, token: string): Promise<void>;
+  cleanupAbandonedMultipartUploads?(): Promise<number>;
 }
 export class LocalFileStore implements FileStore {
   constructor(private root: string) {}
@@ -138,6 +141,7 @@ export class LocalFileStore implements FileStore {
 export class S3FileStore implements FileStore {
   private client: S3Client;
   private tokenSecret: string;
+  private purgeVersions: boolean;
 
   constructor(
     private bucket: string,
@@ -151,6 +155,9 @@ export class S3FileStore implements FileStore {
   ) {
     this.uploadBucket = options.uploadBucket;
     this.tokenSecret = options.secretAccessKey;
+    this.purgeVersions = new URL(options.endpoint).hostname.endsWith(
+      ".backblazeb2.com",
+    );
     this.client = new S3Client({
       endpoint: options.endpoint,
       region: options.region,
@@ -323,6 +330,53 @@ export class S3FileStore implements FileStore {
     );
   }
 
+  async cleanupAbandonedMultipartUploads() {
+    const bucket = this.uploadBucket ?? this.bucket;
+    const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+    let keyMarker: string | undefined;
+    let uploadIdMarker: string | undefined;
+    let scanned = 0;
+    let aborted = 0;
+    let truncated = false;
+    do {
+      const page = await this.client.send(
+        new ListMultipartUploadsCommand({
+          Bucket: bucket,
+          KeyMarker: keyMarker,
+          UploadIdMarker: uploadIdMarker,
+          MaxUploads: 1000,
+        }),
+      );
+      const uploads = page.Uploads ?? [];
+      scanned += uploads.length;
+      for (const upload of uploads) {
+        if (
+          !upload.Key ||
+          !/^[a-f0-9-]{36}\/[a-f0-9-]{36}$/.test(upload.Key) ||
+          !upload.UploadId ||
+          !upload.Initiated ||
+          upload.Initiated.getTime() >= cutoff
+        )
+          continue;
+        await this.client.send(
+          new AbortMultipartUploadCommand({
+            Bucket: bucket,
+            Key: upload.Key,
+            UploadId: upload.UploadId,
+          }),
+        );
+        aborted++;
+        if (aborted >= 100) return aborted;
+      }
+      truncated = page.IsTruncated ?? false;
+      keyMarker = page.NextKeyMarker;
+      uploadIdMarker = page.NextUploadIdMarker;
+      if (truncated && (!keyMarker || !uploadIdMarker))
+        throw new Error("Liste des transferts S3 incomplète.");
+    } while (truncated && scanned < 10_000);
+    return aborted;
+  }
+
   async put(
     organizationId: string,
     body: ReadableStream<Uint8Array>,
@@ -376,26 +430,49 @@ export class S3FileStore implements FileStore {
 
   read(key: string) {
     const location = resolveS3Location(key, this.bucket, this.uploadBucket);
-    const output = new Readable({ read() {} });
-    void this.client
-      .send(new GetObjectCommand(location))
-      .then((result) => {
-        if (!result.Body) return output.destroy(new Error("Objet introuvable"));
-        const source = result.Body as NodeJS.ReadableStream;
-        source.on("data", (chunk) => output.push(chunk));
-        source.on("end", () => output.push(null));
-        source.on("error", (error) => output.destroy(error));
-      })
-      .catch((error) => output.destroy(error));
-    return output;
+    const client = this.client;
+    return Readable.from(
+      (async function* () {
+        const result = await client.send(new GetObjectCommand(location));
+        if (!result.Body) throw new Error("Objet introuvable");
+        for await (const chunk of result.Body as Readable) yield chunk;
+      })(),
+    );
   }
 
   async remove(key: string) {
-    await this.client.send(
-      new DeleteObjectCommand(
-        resolveS3Location(key, this.bucket, this.uploadBucket),
-      ),
-    );
+    const location = resolveS3Location(key, this.bucket, this.uploadBucket);
+    await this.client.send(new DeleteObjectCommand(location));
+    if (!this.purgeVersions) return;
+    const versions: string[] = [];
+    let keyMarker: string | undefined;
+    let versionIdMarker: string | undefined;
+    let truncated: boolean;
+    do {
+      const page = await this.client.send(
+        new ListObjectVersionsCommand({
+          Bucket: location.Bucket,
+          Prefix: location.Key,
+          KeyMarker: keyMarker,
+          VersionIdMarker: versionIdMarker,
+        }),
+      );
+      for (const item of [
+        ...(page.Versions ?? []),
+        ...(page.DeleteMarkers ?? []),
+      ])
+        if (item.Key === location.Key && item.VersionId)
+          versions.push(item.VersionId);
+      truncated = page.IsTruncated ?? false;
+      keyMarker = page.NextKeyMarker;
+      versionIdMarker = page.NextVersionIdMarker;
+      if (truncated && !keyMarker)
+        throw new Error("Liste des versions B2 incomplète.");
+    } while (truncated);
+    for (const versionId of versions)
+      await this.client.send(
+        new DeleteObjectCommand({ ...location, VersionId: versionId }),
+      );
   }
 
   async signedUrl(key: string, filename: string) {

@@ -1,12 +1,17 @@
 import Link from "next/link";
 import { Check, ArrowRight } from "lucide-react";
+import { IMPORT_FORMAT_LABEL } from "@/domain/import-formats";
 import { Brand } from "@/components/brand";
 const plans = [
   {
     name: "Essai",
     price: "0 €",
     text: "Découvrir le parcours avec un petit catalogue.",
-    features: ["Compte et organisation", "CSV et XLSX", "Export générique"],
+    features: [
+      "Compte et organisation",
+      IMPORT_FORMAT_LABEL,
+      "Export générique",
+    ],
   },
   {
     name: "Starter",

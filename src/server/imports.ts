@@ -1,3 +1,4 @@
+import { isCatalogFilename } from "@/domain/import-formats";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createWriteStream } from "node:fs";
@@ -26,11 +27,11 @@ import { createHash } from "node:crypto";
 
 type Actor = Pick<Identity, "userId" | "organizationId">;
 function validateFilename(name: string, archive = false) {
-  if (!(archive ? /\.zip$/i : /\.(csv|xlsx)$/i).test(name))
+  if (!(archive ? /\.zip$/i.test(name) : isCatalogFilename(name)))
     throw new ImportError(
       archive
-        ? "Choisissez une archive ZIP contenant des CSV ou XLSX."
-        : "Choisissez un fichier CSV ou XLSX.",
+        ? "Choisissez une archive ZIP contenant des CSV, TSV, TXT délimité, XLS, XLSX ou ODS."
+        : "Choisissez un fichier CSV, TSV, TXT délimité, XLS, XLSX ou ODS.",
     );
   if (name.length > 180 || /[\x00-\x1f\x7f/\\]/.test(name))
     throw new ImportError(
@@ -41,7 +42,7 @@ function readOptionsFrom(diagnostic: Diagnostic) {
   return {
     headerLine: diagnostic.headerLine,
     delimiter:
-      diagnostic.format === "xlsx"
+      (diagnostic.format ?? "csv") !== "csv"
         ? undefined
         : (diagnostic.delimiter as "," | ";" | "\t"),
     encoding: diagnostic.encoding,
@@ -74,6 +75,48 @@ async function verifySignedSource(
   }
   if (!bytes) throw new ImportError("Le fichier est vide.");
   return { key: storageKey, bytes, sha256: hash.digest("hex") };
+}
+async function inspectSignedSource(
+  actor: Actor,
+  storageKey: string,
+  originalName: string,
+  store: FileStore,
+) {
+  assertOwnedStorageKey(actor, storageKey);
+  let bytes = 0;
+  const hash = createHash("sha256");
+  const checkedStore: FileStore = {
+    put: store.put.bind(store),
+    sample: store.sample.bind(store),
+    remove: store.remove.bind(store),
+    read(key) {
+      if (key !== storageKey) throw new Error("Clé de lecture inattendue.");
+      return Readable.from(
+        (async function* () {
+          for await (const chunk of store.read(key)) {
+            const buffer = Buffer.from(chunk as Uint8Array);
+            bytes += buffer.length;
+            if (bytes > uploadLimitBytes())
+              throw new ImportError(
+                `Le fichier dépasse la limite de ${uploadLimitLabel()}.`,
+              );
+            hash.update(buffer);
+            yield buffer;
+          }
+        })(),
+      );
+    },
+  };
+  const diagnostic = await inspectSource(
+    checkedStore,
+    storageKey,
+    originalName,
+  );
+  if (!bytes) throw new ImportError("Le fichier est vide.");
+  return {
+    stored: { key: storageKey, bytes, sha256: hash.digest("hex") },
+    diagnostic,
+  };
 }
 async function removeUnclaimedSource(store: FileStore, key: string) {
   const [file] = await db
@@ -167,8 +210,12 @@ export async function importSignedUpload(
   validateFilename(originalName);
   assertOwnedStorageKey(actor, storageKey);
   try {
-    const stored = await verifySignedSource(actor, storageKey, store);
-    const diagnostic = await inspectSource(store, storageKey, originalName);
+    const { stored, diagnostic } = await inspectSignedSource(
+      actor,
+      storageKey,
+      originalName,
+      store,
+    );
     return await db.transaction(async (tx) => {
       const [job] = await tx
         .insert(importJobs)

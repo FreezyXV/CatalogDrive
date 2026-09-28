@@ -10,9 +10,18 @@ export class HttpError extends Error {
 }
 export function checkOrigin(request: Request) {
   const origin = request.headers.get("origin");
+  const previewOrigins =
+    process.env.VERCEL_ENV === "preview"
+      ? [process.env.VERCEL_URL, process.env.VERCEL_BRANCH_URL]
+          .filter((host): host is string =>
+            /^[a-z0-9-]+\.vercel\.app$/i.test(host ?? ""),
+          )
+          .map((host) => `https://${host}`)
+      : [];
   const configured = [
     process.env.APP_ORIGIN,
     ...(process.env.APP_ORIGINS?.split(",") ?? []),
+    ...previewOrigins,
   ];
   const allowed = configured.some((value) => {
     if (!value?.trim()) return false;

@@ -70,7 +70,7 @@ async function* rows(tx: Transaction, actor: Actor, id: string) {
         ),
       )
       .orderBy(asc(processedRows.sourceLine))
-      .limit(200);
+      .limit(1000);
     if (!batch.length) break;
     for (const row of batch) {
       line = row.sourceLine;

@@ -960,6 +960,19 @@ tbody tr:hover {
   color: #76908d;
   letter-spacing: 0.7px;
 }
+.upload-limits {
+  margin-top: 12px;
+  max-width: 440px;
+  font-size: 10px;
+  color: #788e94;
+}
+.upload-limits summary {
+  cursor: pointer;
+}
+.upload-limits small {
+  display: block;
+  line-height: 1.6;
+}
 .upload-form {
   padding: 25px;
 }
@@ -1027,6 +1040,13 @@ tbody tr:hover {
   font-size: 10px;
   color: #7b8e93;
   margin-top: 6px;
+}
+.upload-progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+  margin-top: 20px;
+  accent-color: #367c78;
 }
 .upload-form-footer {
   margin-top: 24px;
