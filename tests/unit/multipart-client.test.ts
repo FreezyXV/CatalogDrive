@@ -99,12 +99,14 @@ describe("transfert multipart dans le navigateur", () => {
       }
       attempts++;
       return await new Promise<Response>((_resolve, reject) => {
-        init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        init.signal?.addEventListener("abort", () =>
+          reject(init.signal?.reason),
+        );
       });
     });
     await expect(
       transferInParts(file(), () => undefined, { partTimeoutMs: 10 }),
-    ).rejects.toThrow();
+    ).rejects.toThrow("Le transfert d’une partie a expiré");
     expect(attempts).toBeGreaterThanOrEqual(3);
     expect(aborted).toBe(true);
   });

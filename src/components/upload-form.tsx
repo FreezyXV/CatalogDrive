@@ -29,7 +29,7 @@ async function multipartCommand(
 export async function transferInParts(
   file: File,
   onProgress: (percent: number) => void,
-  { partTimeoutMs = 45_000 }: { partTimeoutMs?: number } = {},
+  { partTimeoutMs = 180_000 }: { partTimeoutMs?: number } = {},
 ) {
   const started = await multipartCommand(
     { action: "start", bytes: file.size },
@@ -67,7 +67,12 @@ export async function transferInParts(
           lastError = undefined;
           break;
         } catch (error) {
-          lastError = error;
+          lastError =
+            error instanceof Error && error.name === "TimeoutError"
+              ? new Error(
+                  "Le transfert d’une partie a expiré. Vérifiez votre connexion puis réessayez.",
+                )
+              : error;
           if (attempt < 2)
             await new Promise((resolve) =>
               setTimeout(resolve, 500 * (attempt + 1)),
