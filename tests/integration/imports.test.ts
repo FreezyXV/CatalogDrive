@@ -2,6 +2,7 @@ import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 import yazl from "yazl";
 import ExcelJS from "exceljs";
+import * as XLSX from "xlsx";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -49,6 +50,7 @@ import {
   qualityRows,
   queueImport,
   runJob,
+  reviewRow,
   saveMapping,
 } from "../../src/server/catalog";
 import { createExport, getExport } from "../../src/server/exports";
@@ -212,7 +214,7 @@ describe("compte et import sur PostgreSQL réel", () => {
       else process.env.UPLOAD_MAX_BYTES = previous;
     }
   });
-  it("importe un ZIP CSV/XLSX en deux catalogues et préserve l’archive jusqu’au dernier retrait", async () => {
+  it("importe un ZIP CSV/XLSX/XLS/ODS/TXT en cinq catalogues et préserve l’archive jusqu’au dernier retrait", async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("Catalogue");
     sheet.addRow(["ref", "nom"]);
@@ -222,6 +224,27 @@ describe("compte et import sur PostgreSQL réel", () => {
     zip.addBuffer(
       Buffer.from(await workbook.xlsx.writeBuffer()),
       "b/catalogue.xlsx",
+    );
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      book,
+      XLSX.utils.aoa_to_sheet([
+        ["sku", "nom", "devise"],
+        ["00123", "Pièce", "EUR"],
+      ]),
+      "Catalogue",
+    );
+    zip.addBuffer(
+      XLSX.write(book, { type: "buffer", bookType: "biff8" }),
+      "c/catalogue.xls",
+    );
+    zip.addBuffer(
+      XLSX.write(book, { type: "buffer", bookType: "ods" }),
+      "d/catalogue.ods",
+    );
+    zip.addBuffer(
+      Buffer.from("sku\tnom\tdevise\n00123\tPièce\tEUR\n"),
+      "e/catalogue.txt",
     );
     zip.end();
     const chunks: Buffer[] = [];
@@ -233,13 +256,32 @@ describe("compte et import sur PostgreSQL réel", () => {
       new Blob([new Uint8Array(original)]).stream(),
       store,
     );
-    expect(ids).toHaveLength(2);
+    expect(ids).toHaveLength(5);
     const first = await getImport(actorA, ids[0]);
     const second = await getImport(actorA, ids[1]);
     expect(first.job.archiveEntry).toBe("a/catalogue.csv");
     expect(first.job.diagnostic.preview[0].values[0]).toBe("C-001");
     expect(second.job.archiveEntry).toBe("b/catalogue.xlsx");
     expect(second.job.diagnostic.preview[0].values[0]).toBe("X-002");
+    for (const id of ids.slice(2)) {
+      const imported = await getImport(actorA, id);
+      expect(imported.job.diagnostic.preview[0].values[0]).toBe("00123");
+      await saveMapping(
+        actorA,
+        id,
+        { sku: 0, product_name: 1, currency: 2 },
+        DEFAULT_RULES,
+        imported.job.readOptions,
+      );
+      await queueImport(actorA, id);
+      await runJob(id);
+      const exported = await createExport(
+        actorA,
+        id,
+        defaultExportConfig("generic"),
+      );
+      expect(exported.rowCount).toBe(1);
+    }
     const archive = await getSourceArchiveForImport(actorA, ids[0]);
     await expect(
       getSourceArchiveForImport(actorB, ids[0]),
@@ -250,7 +292,10 @@ describe("compte et import sur PostgreSQL réel", () => {
     expect(Buffer.concat(restored)).toEqual(original);
     await removeImport(actorA, ids[0], store);
     expect(await store.sample(archive.storageKey)).toBeTruthy();
-    await removeImport(actorA, ids[1], store);
+    for (const id of ids.slice(1)) {
+      expect(await store.sample(archive.storageKey)).toBeTruthy();
+      await removeImport(actorA, id, store);
+    }
     await expect(store.sample(archive.storageKey)).rejects.toThrow();
     expect(
       await db
@@ -389,6 +434,53 @@ describe("compte et import sur PostgreSQL réel", () => {
     await removeImport(actorA, id, store);
     await expect(store.sample(exported.storageKey)).rejects.toThrow();
     await expect(store.sample(exported.reportKey)).rejects.toThrow();
+  });
+  it("traite les doublons entre lots et conserve les décisions manuelles", async () => {
+    const id = await importCsv(
+      actorA,
+      "lots.tsv",
+      new Blob([
+        "sku\tnom\tdevise\n" + "A1\tPièce\tEUR\n".repeat(2005),
+      ]).stream(),
+      store,
+    );
+    try {
+      await saveMapping(
+        actorA,
+        id,
+        { sku: 0, product_name: 1, currency: 2 },
+        { ...DEFAULT_RULES, fuzzyDuplicates: false },
+        {},
+      );
+      await queueImport(actorA, id);
+      await runJob(id);
+      const result = await qualityRows(actorA, id, "ambiguous", 41);
+      expect(result.job.counts).toMatchObject({
+        total: 2005,
+        valid: 1,
+        ambiguous: 2004,
+        duplicates: 2004,
+      });
+      expect(result.rows).toHaveLength(4);
+      expect(result.rows.at(-1)?.sourceLine).toBe(2006);
+      const row = result.rows[0];
+      expect(row.issues[0].relatedLine).toBe(2);
+      const counts = await reviewRow(actorA, id, row.id, {
+        version: row.version,
+        action: "keep",
+        issueId: "_row:duplicate_exact",
+      });
+      expect(counts).toMatchObject({
+        valid: 2,
+        ambiguous: 2003,
+        duplicates: 2003,
+      });
+      await expect(qualityRows(actorB, id)).rejects.toMatchObject({
+        status: 404,
+      });
+    } finally {
+      await removeImport(actorA, id, store);
+    }
   });
   it("évite une nouvelle lecture de l'original quand le mapping conserve les options détectées", async () => {
     const id = await importCsv(

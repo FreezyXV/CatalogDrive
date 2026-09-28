@@ -25,9 +25,13 @@ type Row = {
 export function QualityReview({
   id,
   initialRows,
+  filter,
+  page = 1,
 }: {
   id: string;
   initialRows: Row[];
+  filter?: string;
+  page?: number;
 }) {
   const router = useRouter();
   const [rows, setRows] = useState(initialRows);
@@ -55,7 +59,13 @@ export function QualityReview({
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
-      const refreshed = await fetch(`/api/imports/${id}/catalog?status=all`);
+      const query = new URLSearchParams({
+        status: filter ?? "all",
+        page: String(page),
+      });
+      const refreshed = await fetch(`/api/imports/${id}/catalog?${query}`);
+      if (!refreshed.ok)
+        throw new Error("Impossible de recharger cette page de lignes.");
       const data = await refreshed.json();
       setRows(data.rows);
       setEditing(null);

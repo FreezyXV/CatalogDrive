@@ -47,7 +47,10 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "sanitize-html": "2.17.7",
+    "saxes": "6.0.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "yauzl": "3.4.0",
+    "yazl": "3.3.1",
     "zod": "4.6.5"
   },
   "devDependencies": {
@@ -67,7 +70,6 @@
     "tailwindcss": "4.3.3",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "vitest": "5.0.1",
-    "yazl": "3.3.1"
+    "vitest": "5.0.1"
   }
 }

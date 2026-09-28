@@ -1,5 +1,11 @@
 # Vérification du pilote — 24 septembre 2026
 
+## Formats et grands catalogues — 28 septembre 2026
+
+Le dépôt accepte CSV, TSV, TXT délimité, XLSX, anciens XLS, ODS et ZIP mixtes. Le plafond du parser est de 500 000 lignes ; XLSX et ODS sont lus en flux. Les écritures et la détection des doublons sont regroupées, un index organisation/import/ligne accélère les parcours, et la validation est paginée jusqu’à la page 10 000 sans perdre le filtre après une décision. Voir [FORMATS.md](FORMATS.md) pour les bornes exactes et les exclusions.
+
+Le parcours local d’un TSV propre de 500 000 lignes a passé diagnostic, traitement, export des 500 000 lignes et accès à la dernière page. Le fichier utilisateur `.xls` de 122 765 lignes est bien un XLSX et passe le diagnostic local. Les plafonds de taille, de base et de temps d’exécution hébergés restent distincts du plafond de lignes.
+
 ## Résultat
 
 Le parcours métier demandé fonctionne localement de bout en bout avec PostgreSQL et des fichiers réels : inscription, CSV/XLSX, diagnostic, mapping réutilisable, normalisation, catégories qualité, décisions manuelles, export et rapport. Le pilote est également déployé sur le projet Vercel `catalog-drive`, avec PostgreSQL et Storage Supabase réels. Le domaine de production `https://catalog-drive-ivans-projects-66d9a97b.vercel.app` est accessible publiquement, sur décision du propriétaire.
@@ -76,9 +82,9 @@ Le 24 septembre, un projet Supabase distinct `catamotive-preview` a reçu les 15
 - Le paiement est volontairement absent ; la page Tarifs n’effectue aucun débit.
 - Aucune API CMS n’est simulée. Les sorties sont des fichiers d’import validés d’après les schémas publics, à requalifier lorsqu’un CMS modifie son format.
 - Les invitations d’équipe ne sont pas incluses dans les critères d’acceptation fonctionnels de ce MVP.
-- Le XLSX est chargé en mémoire seulement après un préflight plafonnant le contenu décompressé à 64 Mio. Cette décision contourne un défaut du lecteur streaming ExcelJS sur certains ordres d’entrées ZIP ; les fichiers XLSX de 50 Mo proches du plafond ne sont pas tous garantis.
+- XLSX et ODS sont lus en flux après précontrôle borné (256 Mio au total, 192 Mio de cellules et 32 Mio par fichier de métadonnées). Les anciens XLS binaires sont chargés en mémoire sous une borne de 16 Mio. Voir [FORMATS.md](FORMATS.md).
 - Vercel exécute le traitement dans la requête, avec `maxDuration=300`. Les volumes supérieurs au MVP doivent passer sur un worker durable.
-- Les ZIP sont actuellement limités à 50 Mo compressés, 20 entrées CSV/XLSX, 50 Mo par entrée et 100 Mio décompressés au total. La cible de 1 Gio par fichier n'est pas encore disponible ; voir [COMMERCIALISATION.md](COMMERCIALISATION.md).
+- Les ZIP sont actuellement limités à 50 Mo compressés, 20 entrées CSV/TSV/TXT/XLS/XLSX/ODS, 50 Mo par entrée et 100 Mio décompressés au total. La cible de 1 Gio par fichier n'est pas encore disponible ; voir [COMMERCIALISATION.md](COMMERCIALISATION.md).
 
 ## Avant exploitation commerciale
 

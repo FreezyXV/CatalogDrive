@@ -1,3 +1,4 @@
+import { isCatalogFilename } from "@/domain/import-formats";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createWriteStream } from "node:fs";
@@ -26,11 +27,11 @@ import { createHash } from "node:crypto";
 
 type Actor = Pick<Identity, "userId" | "organizationId">;
 function validateFilename(name: string, archive = false) {
-  if (!(archive ? /\.zip$/i : /\.(csv|xlsx)$/i).test(name))
+  if (!(archive ? /\.zip$/i.test(name) : isCatalogFilename(name)))
     throw new ImportError(
       archive
-        ? "Choisissez une archive ZIP contenant des CSV ou XLSX."
-        : "Choisissez un fichier CSV ou XLSX.",
+        ? "Choisissez une archive ZIP contenant des CSV, TSV, TXT délimité, XLS, XLSX ou ODS."
+        : "Choisissez un fichier CSV, TSV, TXT délimité, XLS, XLSX ou ODS.",
     );
   if (name.length > 180 || /[\x00-\x1f\x7f/\\]/.test(name))
     throw new ImportError(
@@ -41,7 +42,7 @@ function readOptionsFrom(diagnostic: Diagnostic) {
   return {
     headerLine: diagnostic.headerLine,
     delimiter:
-      diagnostic.format === "xlsx"
+      (diagnostic.format ?? "csv") !== "csv"
         ? undefined
         : (diagnostic.delimiter as "," | ";" | "\t"),
     encoding: diagnostic.encoding,

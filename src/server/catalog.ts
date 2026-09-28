@@ -142,7 +142,6 @@ export async function queueImport(actor: Actor, id: string) {
       .values({ ...actor, action: "processing.queued", entityId: id });
   });
 }
-type StoredRow = typeof processedRows.$inferSelect;
 function activeIssues(issues: Issue[], decisions: Decision[]) {
   return issues.filter(
     (issue) =>
@@ -156,16 +155,23 @@ export async function duplicatePass(
   tx: Transaction,
   job: typeof importJobs.$inferSelect,
 ) {
-  const exact = new Map<string, { line: number; data: StoredRow["data"] }>();
-  const buckets = new Map<
-    string,
-    { line: number; data: StoredRow["data"] }[]
-  >();
+  const exact = new Map<string, number>();
+  const buckets = new Map<string, { line: number; sku: string }[]>();
   let cursor = 0;
   const counts = emptyCounts();
   while (true) {
     const rows = await tx
-      .select()
+      .select({
+        id: processedRows.id,
+        sourceLine: processedRows.sourceLine,
+        sku: sql<string>`${processedRows.data}->>'sku'`,
+        brand: sql<string>`${processedRows.data}->>'brand'`,
+        issues: processedRows.issues,
+        decisions: processedRows.decisions,
+        excluded: processedRows.excluded,
+        status: processedRows.status,
+        transformed: sql<boolean>`jsonb_array_length(${processedRows.transformations}) > 0`,
+      })
       .from(processedRows)
       .where(
         and(
@@ -175,38 +181,44 @@ export async function duplicatePass(
         ),
       )
       .orderBy(asc(processedRows.sourceLine))
-      .limit(200);
+      .limit(1000);
     if (!rows.length) break;
+    const updates: {
+      id: string;
+      issues: Issue[];
+      status: string;
+      confidence: string;
+    }[] = [];
     for (const row of rows) {
       cursor = row.sourceLine;
       let issues = row.issues.filter(
         (issue) => !issue.code.startsWith("duplicate_"),
       );
-      const sku = (row.data.sku ?? "").toUpperCase().replace(/[\s.\-/]/g, "");
-      const brand = (row.data.brand ?? "").toUpperCase();
+      const sku = (row.sku ?? "").toUpperCase().replace(/[\s.\-/]/g, "");
+      const brand = (row.brand ?? "").toUpperCase();
       const key = `${brand}\u0000${sku}`;
       if (!row.excluded && sku) {
         const previous = exact.get(key);
-        if (previous)
+        if (previous !== undefined)
           issues.push({
             id: "_row:duplicate_exact",
             field: "_row",
             code: "duplicate_exact",
             severity: "warning",
-            original: row.data.sku ?? "",
-            message: `Même SKU et marque que la ligne ${previous.line}. Vérifiez avant de conserver ou d’exclure.`,
+            original: row.sku ?? "",
+            message: `Même SKU et marque que la ligne ${previous}. Vérifiez avant de conserver ou d’exclure.`,
             score: 1,
-            relatedLine: previous.line,
+            relatedLine: previous,
           });
         else {
-          exact.set(key, { line: row.sourceLine, data: row.data });
+          exact.set(key, row.sourceLine);
           const bucketKey = `${brand}\u0000${sku.slice(0, 3)}`;
           const candidates = buckets.get(bucketKey) ?? [];
           if (job.rules?.fuzzyDuplicates) {
             const probable = candidates
               .map((candidate) => ({
                 candidate,
-                score: similarity(sku, candidate.data.sku ?? ""),
+                score: similarity(sku, candidate.sku),
               }))
               .sort((a, b) => b.score - a.score)[0];
             if (probable && probable.score >= 0.82 && probable.score < 1)
@@ -215,14 +227,14 @@ export async function duplicatePass(
                 field: "_row",
                 code: "duplicate_probable",
                 severity: "warning",
-                original: row.data.sku ?? "",
+                original: row.sku ?? "",
                 message: `Référence proche de la ligne ${probable.candidate.line} (similarité de bigrammes, recherche bornée). Aucune fusion automatique.`,
                 score: Number(probable.score.toFixed(3)),
                 relatedLine: probable.candidate.line,
               });
           }
           if (candidates.length < 30) {
-            candidates.push({ line: row.sourceLine, data: row.data });
+            candidates.push({ line: row.sourceLine, sku: row.sku ?? "" });
             buckets.set(bucketKey, candidates);
           }
         }
@@ -233,22 +245,29 @@ export async function duplicatePass(
         JSON.stringify(issues) !== JSON.stringify(row.issues) ||
         status !== row.status
       )
-        await tx
-          .update(processedRows)
-          .set({
-            issues,
-            status,
-            confidence:
-              status === "valid" ? "1" : status === "invalid" ? "0" : "0.6",
-          })
-          .where(eq(processedRows.id, row.id));
+        updates.push({
+          id: row.id,
+          issues,
+          status,
+          confidence:
+            status === "valid" ? "1" : status === "invalid" ? "0" : "0.6",
+        });
       counts.total++;
       if (row.excluded) counts.excluded++;
       else counts[status]++;
       if (issues.some((issue) => issue.code.startsWith("duplicate_")))
         counts.duplicates++;
-      if (row.transformations.length) counts.transformed++;
+      if (row.transformed) counts.transformed++;
     }
+    if (updates.length)
+      await tx.execute(sql`
+        UPDATE processed_rows AS r
+        SET issues = u.issues, status = u.status, confidence = u.confidence
+        FROM jsonb_to_recordset(${JSON.stringify(updates)}::jsonb)
+          AS u(id uuid, issues jsonb, status text, confidence text)
+        WHERE r.id = u.id AND r.import_id = ${job.id}
+          AND r.organization_id = ${job.organizationId}
+      `);
   }
   return counts;
 }
@@ -267,6 +286,7 @@ export async function processJob(job: typeof importJobs.$inferSelect) {
     );
   let batch: (typeof processedRows.$inferInsert)[] = [];
   let count = 0;
+  let batchBytes = 0;
   const at = new Date().toISOString();
   const flush = async () => {
     if (!batch.length) return;
@@ -286,6 +306,7 @@ export async function processJob(job: typeof importJobs.$inferSelect) {
       await tx.insert(processedRows).values(batch);
     });
     batch = [];
+    batchBytes = 0;
   };
   await inspectSource(
     getFileStore(),
@@ -300,7 +321,7 @@ export async function processJob(job: typeof importJobs.$inferSelect) {
         origin: `${file.originalName}:${job.readOptions.sheet ?? "CSV"}:${record.line}`,
       });
       count++;
-      batch.push({
+      const stored = {
         organizationId: job.organizationId,
         importId: job.id,
         runId: job.runId!,
@@ -308,8 +329,10 @@ export async function processJob(job: typeof importJobs.$inferSelect) {
         raw: record.values,
         ...normalized,
         confidence: String(normalized.confidence),
-      });
-      if (batch.length >= 100) await flush();
+      };
+      batchBytes += Buffer.byteLength(JSON.stringify(stored));
+      batch.push(stored);
+      if (batch.length >= 1000 || batchBytes >= 8 * 1024 * 1024) await flush();
     },
   );
   await flush();

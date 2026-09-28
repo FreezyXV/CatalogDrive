@@ -1,6 +1,6 @@
 # CataMotive — état de préparation commerciale
 
-État au 24 septembre 2026 : **pilote public gratuit utilisable, vente en libre-service non prête**. La production traite de vrais fichiers avec PostgreSQL et Supabase Storage jusqu'à 50 Mo. Une branche Preview isolée côté base a diagnostiqué un CSV de 199 Mo avec Backblaze B2, sans qualifier encore le traitement et l'export hébergés à cette taille. Les résultats sont détaillés dans [VERIFICATION.md](VERIFICATION.md). La page Tarifs affiche des hypothèses ; aucun abonnement n'est activé ni facturé.
+État au 28 septembre 2026 : **pilote public gratuit utilisable, vente en libre-service non prête**. La production traite de vrais fichiers avec PostgreSQL et Supabase Storage jusqu'à 50 Mo. Une branche Preview isolée côté base a diagnostiqué un CSV de 199 Mo avec Backblaze B2, sans qualifier encore le traitement et l'export hébergés à cette taille. Les résultats sont détaillés dans [VERIFICATION.md](VERIFICATION.md). La page Tarifs affiche des hypothèses ; aucun abonnement n'est activé ni facturé.
 
 ## Bloquants avant la vente
 
@@ -18,7 +18,7 @@ Une vente accompagnée avec facturation manuelle évite l'intégration du paieme
 ## Capacités utiles au-delà du MVP
 
 1. **Équipes et agences** : invitations, rôles propriétaire/éditeur/lecture seule, changement d'organisation et révocation des accès. Critère : deux membres collaborent sur un catalogue sans franchir les droits d'une autre organisation.
-2. **Traitement asynchrone durable** : worker hébergé, progression et reprise après arrêt ; seulement ensuite relever la limite de 50 Mo / 50 000 lignes. Critère : une tâche interrompue reprend sans doublon ni résultat partiel exposé.
+2. **Traitement asynchrone durable** : worker hébergé, progression et reprise après arrêt ; nécessaire pour garantir les catalogues volumineux sur l’hébergement malgré le plafond du parser maintenant fixé à 500 000 lignes. Critère : une tâche interrompue reprend sans doublon ni résultat partiel exposé.
 3. **Réconciliation du stockage** : suivre chaque URL d'upload émise et purger les objets non finalisés après expiration. Critère : un upload abandonné ne laisse plus d'objet après la tâche de nettoyage, sans supprimer les sources actives.
 4. **Diagnostics métier par fournisseur** : corpus de fichiers réels anonymisés, profils de mapping/règles validés par l'utilisateur et tests de référence. Critère : chaque nouveau fournisseur dispose d'un résultat reproductible et d'un rapport des exceptions.
 5. **Connecteurs CMS éventuels** : uniquement après qualification des exports de fichiers et des permissions API des boutiques. Aucune synchronisation automatique n'est promise aujourd'hui.
@@ -36,7 +36,7 @@ Ne pas présenter le pilote public actuel comme un service commercial prêt tant
 
 La comparaison des fournisseurs gratuits pour les dépôts de 50 à 200 Mo se trouve dans [STOCKAGE_GRATUIT.md](STOCKAGE_GRATUIT.md).
 
-Le premier incrément ZIP est disponible dans le code : une archive de **50 Mo compressés en production**, ou **200 Mo sur la branche Preview**, et **20 fichiers CSV/XLSX maximum** produit un import distinct par fichier. Chaque entrée est bornée par la limite de dépôt active et le total décompressé reste à 100 Mio. Les chemins dangereux, liens symboliques, entrées chiffrées et formats annexes sont refusés. L'archive originale et les fichiers extraits sont conservés ; une erreur d'entrée annule le lot entier. Les tests d'intégration couvrent l'extraction CSV/XLSX, l'isolation des organisations, l'archive identique et le nettoyage.
+Le premier incrément ZIP est disponible dans le code : une archive de **50 Mo compressés en production**, ou **200 Mo sur la branche Preview**, et **20 fichiers CSV/TSV/TXT/XLS/XLSX/ODS maximum** produit un import distinct par fichier. Chaque entrée est bornée par la limite de dépôt active et le total décompressé reste à 100 Mio. Les chemins dangereux, liens symboliques, entrées chiffrées et formats annexes sont refusés. L'archive originale et les fichiers extraits sont conservés ; une erreur d'entrée annule le lot entier. Les tests d'intégration couvrent l'extraction CSV/XLSX, l'isolation des organisations, l'archive identique et le nettoyage.
 
 La cible demandée est **1 Gio par fichier déposé**, ainsi que **1 Gio maximum par entrée décompressée** d'un ZIP. Elle n'est pas atteinte. Le bucket Supabase de production reste plafonné à 50 Mo ; B2 permet les objets plus grands sur Preview, mais l'import initial s'exécute dans une fonction Vercel, ExcelJS charge les classeurs en mémoire, et le traitement métier conserve toutes les lignes dans PostgreSQL. Augmenter une constante de taille exposerait le service à des échecs et à des coûts imprévus.
 
@@ -47,4 +47,4 @@ Jalons nécessaires, chacun avec un test de bout en bout :
 3. **Formats à grande échelle** : CSV en flux, XLSX en lecture bornée ou déportée et ZIP avec bornes sur nombre d'entrées, taille de chaque entrée et expansion totale. Vérifier des CSV, XLSX et ZIP réels de 251 Mio puis jusqu'à 1 Gio, plus les archives corrompues et bombes de décompression.
 4. **Capacité métier** : quotas d'espace et de lignes, traitement des doublons sans index complet en mémoire, pagination et export en flux, surveillance du temps et des volumes PostgreSQL. Vérifier mapping, rapport qualité et export d'un grand catalogue représentatif, pas seulement son dépôt.
 
-La production doit continuer d'afficher sa limite réelle de 50 Mo et de 50 000 lignes. La branche Preview affiche 200 Mo pour les dépôts, avec les restrictions XLSX/ZIP indiquées dans l'interface ; son diagnostic CSV à 199 Mo a passé un test hébergé, mais ce résultat seul ne justifie pas une promesse commerciale de traitement complet à 200 Mo.
+La taille réelle de dépôt en production reste de 50 Mo. La nouvelle limite de lecture est de 500 000 lignes, avec les bornes de format détaillées dans [FORMATS.md](FORMATS.md). La branche Preview affiche 200 Mo pour les dépôts, avec les restrictions XLSX/ZIP indiquées dans l'interface ; son diagnostic CSV à 199 Mo a passé un test hébergé, mais ce résultat seul ne justifie pas une promesse commerciale de traitement complet à 200 Mo.

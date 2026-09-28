@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, FileSearch, FolderLock, ScanLine } from "lucide-react";
+import { IMPORT_FORMAT_LABEL } from "@/domain/import-formats";
 import { Brand } from "@/components/brand";
 export default function Home() {
   return (
@@ -24,9 +25,12 @@ export default function Home() {
           <em>des données claires.</em>
         </h1>
         <p>
-          Transformez vos CSV et XLSX fournisseurs en catalogues propres,
-          contrôlés et prêts pour WooCommerce, PrestaShop ou Shopify.
+          Transformez vos fichiers fournisseurs en catalogues propres, contrôlés
+          et prêts pour WooCommerce, PrestaShop ou Shopify.
         </p>
+        <div className="format-tag" aria-label="Formats compatibles">
+          Formats compatibles : {IMPORT_FORMAT_LABEL}
+        </div>
         <div className="landing-actions">
           <Link href="/inscription" className="button primary">
             Créer mon espace

@@ -1,6 +1,8 @@
 "use client";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { IMPORT_FILE_ACCEPT, isImportFilename } from "@/domain/import-formats";
+import { LIMITS } from "@/domain/import-limits";
 import {
   ArrowRight,
   FileSpreadsheet,
@@ -116,9 +118,11 @@ export function UploadForm({
   function choose(selected?: File) {
     if (!selected) return;
     setError("");
-    if (!/\.(csv|xlsx|zip)$/i.test(selected.name)) {
+    if (!isImportFilename(selected.name)) {
       setFile(null);
-      setError("Choisissez un fichier CSV, XLSX ou ZIP.");
+      setError(
+        "Choisissez un fichier CSV, TSV, TXT délimité, XLS, XLSX, ODS ou ZIP.",
+      );
       return;
     }
     if (!selected.size || selected.size > maxBytes) {
@@ -223,7 +227,7 @@ export function UploadForm({
           id="catalog-file"
           type="file"
           aria-label="Fichier catalogue fournisseur"
-          accept=".csv,.xlsx,.zip,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip"
+          accept={IMPORT_FILE_ACCEPT}
           disabled={pending}
           onChange={(event) => choose(event.target.files?.[0])}
         />
@@ -236,15 +240,19 @@ export function UploadForm({
           Choisir un fichier
         </button>
         <small>
-          CSV, XLSX ou ZIP de plusieurs catalogues · {maxLabel} maximum par
-          fichier déposé
+          {maxLabel} maximum par fichier déposé · Jusqu’à{" "}
+          {LIMITS.rows.toLocaleString("fr-FR")} lignes de données
         </small>
-        {maxBytes > 50_000_000 && (
+        <details className="upload-limits">
+          <summary>Précisions sur les formats et limites</summary>
           <small>
-            Pour les ZIP : 100 Mio décompressés au total. Pour les XLSX : 64 Mio
-            décompressés avant analyse.
+            TXT délimité par virgule, point-virgule ou tabulation. ZIP : 20
+            catalogues et 100 Mio décompressés au total. XLSX / ODS : 256 Mio
+            décompressés, dont 192 Mio par feuille ou contenu ODS et 32 Mio par
+            fichier de métadonnées. Ancien XLS binaire : 16 Mio. Les classeurs
+            chiffrés ou contenant des macros sont refusés.
           </small>
-        )}
+        </details>
       </div>
       {file && (
         <div className="selected-file">

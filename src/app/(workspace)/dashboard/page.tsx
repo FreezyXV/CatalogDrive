@@ -42,7 +42,8 @@ export default async function Dashboard() {
             vos données fournisseurs.
           </h2>
           <p>
-            Déposez un CSV, XLSX ou ZIP. Mappez, normalisez, contrôlez
+            Déposez un CSV, TSV, TXT, Excel, ODS ou ZIP. Mappez, normalisez,
+            contrôlez
             <br className="desktop-break" /> puis exportez vers votre outil
             cible.
           </p>

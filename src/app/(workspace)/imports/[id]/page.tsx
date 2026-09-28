@@ -95,9 +95,11 @@ export default async function ImportPage({
           <small>{d.encodingNote}</small>
         </div>
         <div className="stat">
-          <span>{d.format === "xlsx" ? "Feuille" : "Séparateur"}</span>
+          <span>
+            {(d.format ?? "csv") !== "csv" ? "Feuille" : "Séparateur"}
+          </span>
           <strong className="stat-text">
-            {d.format === "xlsx"
+            {(d.format ?? "csv") !== "csv"
               ? (d.sheet ?? "Première feuille")
               : d.delimiter === ";"
                 ? "Point-virgule"
@@ -106,7 +108,7 @@ export default async function ImportPage({
                   : "Tabulation"}
           </strong>
           <small>
-            {d.format === "xlsx"
+            {(d.format ?? "csv") !== "csv"
               ? "Sélectionnée pour le mapping"
               : "Détecté dans l’en-tête"}
           </small>

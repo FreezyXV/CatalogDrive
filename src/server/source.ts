@@ -1,10 +1,12 @@
 import ExcelJS from "exceljs";
 import yauzl from "yauzl";
-import { mkdtemp, rm } from "node:fs/promises";
+import yazl from "yazl";
+import { mkdtemp, open, rm } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
+import type { Readable } from "node:stream";
 import {
   analyzeCsv,
   detectFormat,
@@ -14,6 +16,7 @@ import {
 } from "@/domain/csv";
 import { suggestMapping, type ReadOptions } from "@/domain/catalog";
 import type { FileStore } from "./storage";
+import { legacyXlsSheets, odsSheets } from "./spreadsheet-readers";
 
 export type SourceRow = { line: number; values: string[] };
 export function inferTypes(preview: SourceRow[], headers: string[]) {
@@ -28,77 +31,167 @@ export function inferTypes(preview: SourceRow[], headers: string[]) {
     return "texte";
   });
 }
-export async function preflightXlsx(path: string) {
-  await new Promise<void>((resolve, reject) =>
-    yauzl.open(
-      path,
-      { lazyEntries: true, validateEntrySizes: true },
-      (error, zip) => {
-        if (error || !zip) {
-          reject(new ImportError("Classeur XLSX invalide ou chiffré."));
-          return;
-        }
-        let total = 0,
-          entries = 0,
-          hasWorkbook = false;
-        const fail = () => {
-          zip.close();
-          reject(
-            new ImportError(
-              "Classeur refusé : archive trop volumineuse, chiffrée, active ou contenant des liens externes.",
-            ),
+// Inspect every decompressed byte before giving XML to the Excel reader.
+// The original remains unchanged; only a temporary reader copy is reordered.
+export async function preflightXlsx(
+  path: string,
+  format: "xlsx" | "ods" = "xlsx",
+) {
+  let zip: yauzl.ZipFile;
+  try {
+    zip = await yauzl.openPromise(path, {
+      lazyEntries: true,
+      autoClose: false,
+      validateEntrySizes: true,
+      strictFileNames: true,
+    });
+  } catch {
+    throw new ImportError("Classeur XLSX invalide ou chiffré.");
+  }
+  const entries: yauzl.Entry[] = [];
+  const names = new Set<string>();
+  let total = 0;
+  try {
+    for await (const entry of zip.eachEntry()) {
+      total += entry.uncompressedSize;
+      if (
+        entries.length >= 1000 ||
+        names.has(entry.fileName) ||
+        total > 256 * 1024 * 1024 ||
+        entry.uncompressedSize > 192 * 1024 * 1024 ||
+        (!/^(xl\/worksheets\/sheet\d+\.xml|content\.xml)$/.test(
+          entry.fileName,
+        ) &&
+          entry.uncompressedSize > 32 * 1024 * 1024) ||
+        entry.generalPurposeBitFlag & 1 ||
+        /(?:^|\/)\.\.(?:\/|$)|vbaProject|externalLinks|embeddings|(?:^|\/)Scripts|(?:^|\/)Basic|(?:^|\/)Object/i.test(
+          entry.fileName,
+        ) ||
+        entry.uncompressedSize / Math.max(1, entry.compressedSize) > 1000
+      )
+        throw new ImportError(
+          "Classeur refusé : archive trop volumineuse, chiffrée, active ou contenant des liens externes.",
+        );
+      names.add(entry.fileName);
+      entries.push(entry);
+      if (entry.fileName.endsWith("/")) continue;
+      const stream = await zip.openReadStreamPromise(entry);
+      let bytes = 0;
+      for await (const chunk of stream) {
+        bytes += chunk.length;
+        if (bytes > entry.uncompressedSize)
+          throw new ImportError("La taille d’une entrée XLSX est incohérente.");
+      }
+      if (bytes !== entry.uncompressedSize)
+        throw new ImportError("La taille d’une entrée XLSX est incohérente.");
+    }
+    if (format === "ods") {
+      if (!names.has("content.xml") || !names.has("mimetype"))
+        throw new ImportError("Le fichier n’est pas un classeur ODS.");
+      return entries;
+    }
+    if (
+      !names.has("xl/workbook.xml") ||
+      !names.has("xl/_rels/workbook.xml.rels")
+    )
+      throw new ImportError("L’archive ne contient pas de classeur XLSX.");
+    const sheets = entries.filter((entry) =>
+      /^xl\/worksheets\/sheet\d+\.xml$/.test(entry.fileName),
+    );
+    if (!sheets.length || sheets.length > 20)
+      throw new ImportError(
+        "Un classeur doit contenir entre 1 et 20 feuilles.",
+      );
+    return entries;
+  } finally {
+    zip.close();
+  }
+}
+async function prepareXlsx(path: string, outputPath: string) {
+  const entries = await preflightXlsx(path);
+  const zip = await yauzl.openPromise(path, { autoClose: false });
+  const output = new yazl.ZipFile();
+  const outputStream = output.outputStream as Readable;
+  let active: Readable | undefined;
+  output.on("error", (error) => outputStream.destroy(error));
+  try {
+    // ExcelJS requires workbook metadata, styles and shared strings before cells.
+    // Reordering removes its dependency on the supplier's ZIP entry order and
+    // avoids materializing the entire workbook or its deferred worksheet files.
+    const metadata = [
+      "xl/workbook.xml",
+      "xl/_rels/workbook.xml.rels",
+      "xl/styles.xml",
+      "xl/sharedStrings.xml",
+    ];
+    let outputAddedStrings = false;
+    const ordered = [
+      ...metadata.flatMap((name) =>
+        entries.filter((entry) => entry.fileName === name),
+      ),
+      ...entries.filter((entry) =>
+        /^xl\/worksheets\/sheet\d+\.xml$/.test(entry.fileName),
+      ),
+    ];
+    for (const entry of ordered) {
+      if (entry.fileName === "xl/_rels/workbook.xml.rels") {
+        const stream = await zip.openReadStreamPromise(entry);
+        const chunks: Buffer[] = [];
+        for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+        const xml = Buffer.concat(chunks).toString("utf8");
+        if (/TargetMode\s*=\s*["']External["']|<!DOCTYPE/i.test(xml))
+          throw new ImportError(
+            "Les relations externes du classeur sont refusées.",
           );
-        };
-        zip.on("error", fail);
-        zip.on("entry", (entry: yauzl.Entry) => {
-          total += entry.uncompressedSize;
-          entries++;
-          if (entry.fileName === "xl/workbook.xml") hasWorkbook = true;
-          if (
-            entries > 1000 ||
-            total > 64 * 1024 * 1024 ||
-            entry.uncompressedSize > 32 * 1024 * 1024 ||
-            entry.generalPurposeBitFlag & 1 ||
-            /(?:^|\/)\.\.(?:\/|$)|vbaProject|externalLinks|embeddings/i.test(
-              entry.fileName,
-            ) ||
-            entry.uncompressedSize / Math.max(1, entry.compressedSize) > 1000
-          ) {
-            fail();
-            return;
-          }
-          if (entry.fileName.endsWith("/")) {
-            zip.readEntry();
-            return;
-          }
+        output.addBuffer(
+          Buffer.from(
+            xml.replace(
+              /Target=(["'])\/?xl\/(worksheets\/sheet\d+\.xml)\1/g,
+              "Target=$1$2$1",
+            ),
+          ),
+          entry.fileName,
+          { compress: false },
+        );
+        continue;
+      }
+      // Workbooks with inline strings still need an empty string cache so the
+      // streaming reader does not spool every worksheet to an unmanaged file.
+      if (
+        /^xl\/worksheets\//.test(entry.fileName) &&
+        !entries.some((e) => e.fileName === "xl/sharedStrings.xml") &&
+        !outputAddedStrings
+      ) {
+        output.addBuffer(
+          Buffer.from(
+            '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="0" uniqueCount="0"/>',
+          ),
+          "xl/sharedStrings.xml",
+          { compress: false },
+        );
+        outputAddedStrings = true;
+      }
+      output.addReadStreamLazy(
+        entry.fileName,
+        { compress: false, size: entry.uncompressedSize },
+        (callback) => {
           zip.openReadStream(entry, (error, stream) => {
-            if (error || !stream) {
-              fail();
-              return;
-            }
-            let bytes = 0;
-            stream.on("data", (chunk: Buffer) => {
-              bytes += chunk.length;
-              if (bytes > entry.uncompressedSize || bytes > 32 * 1024 * 1024) {
-                stream.destroy();
-                fail();
-              }
-            });
-            stream.on("error", fail);
-            stream.on("end", () => zip.readEntry());
+            if (stream) active = stream;
+            callback(error, stream);
           });
-        });
-        zip.on("end", () => {
-          if (!hasWorkbook)
-            reject(
-              new ImportError("L’archive ne contient pas de classeur XLSX."),
-            );
-          else resolve();
-        });
-        zip.readEntry();
-      },
-    ),
-  );
+        },
+      );
+    }
+    output.end();
+    await pipeline(
+      outputStream,
+      createWriteStream(outputPath, { mode: 0o600 }),
+    );
+  } finally {
+    active?.destroy();
+    outputStream.destroy();
+    zip.close();
+  }
 }
 function cellText(cell: ExcelJS.Cell) {
   const value = cell.value;
@@ -127,7 +220,7 @@ export async function inspectSource(
   options: ReadOptions = {},
   onRow?: (row: SourceRow, headers: string[]) => Promise<void>,
 ): Promise<Diagnostic> {
-  if (/\.csv$/i.test(filename)) {
+  if (/\.(csv|tsv|txt)$/i.test(filename)) {
     const sample = await store.sample(key);
     const selected: ReadOptions = { ...options };
     if (!selected.headerLine) {
@@ -174,28 +267,49 @@ export async function inspectSource(
     result.columnTypes = inferTypes(result.preview, result.headers);
     return result;
   }
-  if (!/\.xlsx$/i.test(filename))
-    throw new ImportError("Formats acceptés : CSV ou XLSX.");
+  if (onRow && !options.sheet && /\.(xls|xlsx|ods)$/i.test(filename)) {
+    const diagnostic = await inspectSource(store, key, filename, options);
+    return inspectSource(
+      store,
+      key,
+      filename,
+      { ...options, sheet: diagnostic.sheet },
+      onRow,
+    );
+  }
+  if (!/\.(xls|xlsx|ods)$/i.test(filename))
+    throw new ImportError(
+      "Formats acceptés : CSV, TSV, TXT délimité, XLS, XLSX ou ODS.",
+    );
   const dir = await mkdtemp(join(tmpdir(), "catamotive-xlsx-"));
   const path = join(dir, "source.xlsx");
   try {
     await pipeline(store.read(key), createWriteStream(path, { mode: 0o600 }));
-    await preflightXlsx(path);
-    // ExcelJS' streaming reader cannot read valid archives whose workbook.xml
-    // entry appears after worksheets (including files produced by ExcelJS).
-    // The preflight caps uncompressed data at 64 MiB, so the bounded document
-    // reader is safer and interoperable while rows are still emitted in batches.
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(path);
-    if (workbook.worksheets.length > 20)
-      throw new ImportError("Un classeur est limité à 20 feuilles.");
+    let format: "xlsx" | "xls" | "ods" = /\.ods$/i.test(filename)
+      ? "ods"
+      : "xlsx";
+    if (/\.xls$/i.test(filename)) {
+      const handle = await open(path, "r");
+      const signature = Buffer.alloc(8);
+      try {
+        await handle.read(signature, 0, signature.length, 0);
+      } finally {
+        await handle.close();
+      }
+      if (signature.equals(Buffer.from("d0cf11e0a1b11ae1", "hex")))
+        format = "xls";
+    }
     const diagnostics: Diagnostic[] = [];
-    for (const sheet of workbook.worksheets) {
-      const name = sheet.name || `Feuille ${diagnostics.length + 1}`;
+    const analyzeSheet = async (
+      name: string,
+      rows: AsyncIterable<SourceRow>,
+    ) => {
+      if (diagnostics.length >= 20)
+        throw new ImportError("Un classeur est limité à 20 feuilles.");
       const d: Diagnostic = {
-        format: "xlsx",
+        format,
         encoding: "utf-8",
-        encodingNote: "Texte Unicode du classeur XLSX",
+        encodingNote: `Texte Unicode du classeur ${format.toUpperCase()}`,
         delimiter: "",
         sheet: name,
         headers: [],
@@ -218,7 +332,7 @@ export async function inspectSource(
         d.rowCount++;
         if (d.rowCount > LIMITS.rows)
           throw new ImportError(
-            "Le classeur dépasse 50 000 lignes par feuille.",
+            `Le classeur dépasse ${LIMITS.rows.toLocaleString("fr-FR")} lignes par feuille.`,
           );
         while (record.values.length < d.headers.length) record.values.push("");
         if (record.values.length > d.headers.length) d.irregularRowCount++;
@@ -236,19 +350,16 @@ export async function inspectSource(
           if (record.line >= (headerLine ?? 1)) await consume(record);
         candidates.length = 0;
       };
-      for (let rowNumber = 1; rowNumber <= sheet.rowCount; rowNumber++) {
-        const row = sheet.getRow(rowNumber);
-        if (row.cellCount > LIMITS.columns || row.number > 100_000)
+      for await (const record of rows) {
+        if (record.values.length > LIMITS.columns)
           throw new ImportError(
-            "Le classeur dépasse les limites de lignes ou de colonnes.",
+            `Le classeur dépasse ${LIMITS.columns} colonnes.`,
           );
-        const values = Array.from({ length: row.cellCount }, (_, i) =>
-          cellText(row.getCell(i + 1)),
-        );
-        if (values.join("").length > LIMITS.recordSize)
-          throw new ImportError("Une ligne XLSX dépasse 64 K caractères.");
-        if (values.every((value) => value === "")) continue;
-        const record = { line: row.number, values };
+        if (record.values.join("").length > LIMITS.recordSize)
+          throw new ImportError(
+            "Une ligne du classeur dépasse 64 K caractères.",
+          );
+        if (record.values.every((value) => value === "")) continue;
         if (!d.headers.length) {
           if (headerLine) {
             if (record.line >= headerLine) await consume(record);
@@ -273,6 +384,47 @@ export async function inspectSource(
         );
       d.columnTypes = inferTypes(d.preview, d.headers);
       diagnostics.push(d);
+    };
+    if (format === "xls") {
+      for await (const sheet of legacyXlsSheets(path))
+        await analyzeSheet(sheet.name, sheet.rows);
+    } else if (format === "ods") {
+      const entries = await preflightXlsx(path, "ods");
+      for await (const sheet of odsSheets(path, entries))
+        await analyzeSheet(sheet.name, sheet.rows);
+    } else {
+      const readerPath = join(dir, "reader.xlsx");
+      await prepareXlsx(path, readerPath);
+      const workbook = new ExcelJS.stream.xlsx.WorkbookReader(readerPath, {
+        worksheets: "emit",
+        sharedStrings: "cache",
+        styles: "cache",
+        hyperlinks: "ignore",
+      });
+      try {
+        for await (const sheet of workbook) {
+          const name =
+            (sheet as unknown as { name?: string }).name ||
+            `Feuille ${diagnostics.length + 1}`;
+          async function* sourceRows() {
+            for await (const row of sheet) {
+              if (row.cellCount > LIMITS.columns)
+                throw new ImportError(
+                  `Le classeur dépasse ${LIMITS.columns} colonnes.`,
+                );
+              yield {
+                line: row.number,
+                values: Array.from({ length: row.cellCount }, (_, i) =>
+                  cellText(row.getCell(i + 1)),
+                ),
+              };
+            }
+          }
+          await analyzeSheet(name, sourceRows());
+        }
+      } finally {
+        (workbook as unknown as { stream?: Readable }).stream?.destroy();
+      }
     }
     const result = options.sheet
       ? diagnostics.find((d) => d.sheet === options.sheet)
@@ -290,7 +442,7 @@ export async function inspectSource(
   } catch (error) {
     if (error instanceof ImportError) throw error;
     throw new ImportError(
-      `Lecture XLSX impossible. Vérifiez que le classeur est valide et non chiffré.${error instanceof Error ? ` Détail : ${error.message}` : ""}`,
+      `Lecture du classeur impossible. Vérifiez que le classeur est valide et non chiffré.${error instanceof Error ? ` Détail : ${error.message}` : ""}`,
     );
   } finally {
     await rm(dir, { recursive: true, force: true });

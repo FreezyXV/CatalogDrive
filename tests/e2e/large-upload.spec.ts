@@ -18,7 +18,7 @@ test("50 Mo : dépôt CSV proche du plafond, diagnostic et suppression", async (
     .last()
     .click();
   await expect(
-    page.getByText("50 Mo maximum par fichier déposé"),
+    page.getByText(/50 Mo maximum par fichier déposé/),
   ).toBeVisible();
   const row = `REF;${"A".repeat(1950)}\n`;
   const buffer = Buffer.from(`ref;nom\n${row.repeat(25_000)}`);

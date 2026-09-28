@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LIMITS } from "@/domain/csv";
 import { requireIdentity } from "@/server/auth";
 import { checkOrigin, errorResponse, readJson, HttpError } from "@/server/http";
 import { getImport } from "@/server/imports";
@@ -113,7 +114,7 @@ export async function GET(
       .number()
       .int()
       .min(1)
-      .max(1000)
+      .max(Math.ceil(LIMITS.rows / 50))
       .parse(query.get("page") ?? 1);
     const result = await qualityRows(
       actor,

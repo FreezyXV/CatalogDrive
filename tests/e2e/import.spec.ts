@@ -7,6 +7,7 @@ import {
 import { randomUUID, createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import ExcelJS from "exceljs";
+import * as XLSX from "xlsx";
 import yazl from "yazl";
 const origin = "http://127.0.0.1:3100";
 const password = "mot-de-passe-e2e-local";
@@ -275,6 +276,18 @@ test("parcours mobile : inscription, dépôt et lecture sans débordement de pag
     .getByRole("link", { name: "Nouvel import", exact: true })
     .last()
     .click();
+  await expect(page.locator(".panel-heading .format-tag")).toHaveText(
+    "CSV · TSV · TXT · XLS · XLSX · ODS · ZIP",
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "test-results/formats-mobile.png",
+    fullPage: true,
+  });
   await page
     .getByLabel("Fichier catalogue fournisseur")
     .setInputFiles("public/demo/fournisseur-demo.csv");
@@ -373,3 +386,91 @@ test("un classeur XLSX réel conserve ses feuilles, ses zéros et ses formules c
   await page.getByRole("link", { name: /Configurer le mapping/ }).click();
   await expect(page.getByLabel("Feuille")).toHaveValue("Catalogue");
 });
+
+test("TSV : traitement, pagination et décisions conservant le filtre", async ({
+  page,
+}) => {
+  await signup(page, "Atelier TSV paginé");
+  await page.goto("/imports/new");
+  const data =
+    "sku\tnom\tprix\tdevise\n" +
+    Array.from(
+      { length: 120 },
+      (_, i) => `SKU${String(i).padStart(6, "0")}\tPièce\tINVALIDE\tEUR\n`,
+    ).join("");
+  await page.getByLabel("Fichier catalogue fournisseur").setInputFiles({
+    name: "catalogue.tsv",
+    mimeType: "text/tab-separated-values",
+    buffer: Buffer.from(data),
+  });
+  await page.getByRole("button", { name: "Analyser le fichier" }).click();
+  await page.getByRole("link", { name: /Configurer le mapping/ }).click();
+  await page.getByLabel("Détecter les doublons probables").uncheck();
+  await page.getByRole("button", { name: "Lancer le traitement" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Rapport et validation" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: /^Invalides/ }).click();
+  await page.getByRole("link", { name: "Page suivante" }).click();
+  await expect(page).toHaveURL(/status=invalid&page=2$/);
+  const row = page.locator("article").filter({ hasText: "Ligne source 52" });
+  await row.getByRole("button", { name: "Exclure", exact: true }).click();
+  await expect(page.getByText("Ligne source 52", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByText("Ligne source 102", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Page suivante" }).click();
+  await expect(
+    page.getByText("Ligne source 121", { exact: true }),
+  ).toBeVisible();
+});
+
+for (const format of ["xls", "ods"] as const) {
+  test(`${format.toUpperCase()} : formats visibles, import réel, traitement et export`, async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await expect(page.getByLabel("Formats compatibles")).toContainText(
+      "CSV · TSV · TXT · XLS · XLSX · ODS · ZIP",
+    );
+    await signup(page, `Atelier ${format.toUpperCase()}`);
+    await page.goto("/imports/new");
+    await expect(page.locator(".panel-heading .format-tag")).toHaveText(
+      "CSV · TSV · TXT · XLS · XLSX · ODS · ZIP",
+    );
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      book,
+      XLSX.utils.aoa_to_sheet([
+        ["sku", "nom", "devise"],
+        ["00123", "Pièce", "EUR"],
+      ]),
+      "Catalogue",
+    );
+    const buffer = XLSX.write(book, {
+      type: "buffer",
+      bookType: format === "xls" ? "biff8" : "ods",
+    });
+    await page.getByLabel("Fichier catalogue fournisseur").setInputFiles({
+      name: `catalogue.${format}`,
+      mimeType: "application/octet-stream",
+      buffer,
+    });
+    await page.getByRole("button", { name: "Analyser le fichier" }).click();
+    await expect(
+      page.getByText(format.toUpperCase(), { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("00123", { exact: true })).toBeVisible();
+    await page.getByRole("link", { name: /Configurer le mapping/ }).click();
+    await page.getByRole("button", { name: "Lancer le traitement" }).click();
+    await page.getByRole("link", { name: "Configurer l’export" }).click();
+    const downloaded = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Créer et télécharger" }).click();
+    const file = await downloaded;
+    expect((await readFile((await file.path())!)).toString("utf8")).toContain(
+      "00123",
+    );
+  });
+}

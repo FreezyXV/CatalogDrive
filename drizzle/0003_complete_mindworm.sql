@@ -1,0 +1,1 @@
+CREATE INDEX "rows_import_line" ON "processed_rows" USING btree ("organization_id","import_id","source_line");

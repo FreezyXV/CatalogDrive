@@ -4,6 +4,7 @@ import { ArrowLeft, Download, Settings2 } from "lucide-react";
 import { requirePageIdentity } from "@/server/auth";
 import { qualityRows } from "@/server/catalog";
 import { listExports } from "@/server/exports";
+import { LIMITS } from "@/domain/csv";
 import { HttpError } from "@/server/http";
 import { QualityReview } from "@/components/quality-review";
 export default async function QualityPage({
@@ -11,15 +12,25 @@ export default async function QualityPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; page?: string }>;
 }) {
   const actor = await requirePageIdentity();
   const { id } = await params;
-  const filter = (await searchParams).status;
-  const { job, rows } = await qualityRows(actor, id, filter).catch((error) => {
-    if (error instanceof HttpError && error.status === 404) notFound();
-    throw error;
-  });
+  const query = await searchParams;
+  const filter = ["valid", "ambiguous", "invalid", "excluded"].includes(
+    query.status ?? "",
+  )
+    ? query.status
+    : undefined;
+  const page = Number(query.page ?? 1);
+  if (!Number.isInteger(page) || page < 1 || page > Math.ceil(LIMITS.rows / 50))
+    notFound();
+  const { job, rows } = await qualityRows(actor, id, filter, page).catch(
+    (error) => {
+      if (error instanceof HttpError && error.status === 404) notFound();
+      throw error;
+    },
+  );
   const exports = await listExports(actor, id);
   const counts = job.counts ?? {
     total: 0,
@@ -30,6 +41,12 @@ export default async function QualityPage({
     duplicates: 0,
     transformed: 0,
   };
+  const selectedCount = filter
+    ? counts[filter as "valid" | "ambiguous" | "invalid" | "excluded"]
+    : counts.total;
+  const pages = Math.max(1, Math.ceil(selectedCount / 50));
+  const pageUrl = (number: number) =>
+    `/imports/${id}/quality?${new URLSearchParams({ ...(filter ? { status: filter } : {}), page: String(number) })}`;
   if (job.status !== "ready")
     return (
       <>
@@ -107,8 +124,19 @@ export default async function QualityPage({
           Configuration
         </Link>
       </div>
+      <nav className="filter-bar" aria-label="Pagination des lignes">
+        {page > 1 && <Link href={pageUrl(page - 1)}>Page précédente</Link>}
+        <span>
+          Page {page} sur {pages} · 50 lignes par page
+        </span>
+        {page < pages && <Link href={pageUrl(page + 1)}>Page suivante</Link>}
+        {page < pages - 1 && <Link href={pageUrl(pages)}>Dernière page</Link>}
+      </nav>
       <QualityReview
+        key={`${id}:${filter ?? "all"}:${page}`}
         id={id}
+        filter={filter}
+        page={page}
         initialRows={
           rows as unknown as Parameters<typeof QualityReview>[0]["initialRows"]
         }
