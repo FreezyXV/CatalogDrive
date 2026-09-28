@@ -6,11 +6,19 @@ if (!connectionString)
   throw new Error(
     "DATABASE_URL manque. Exécutez npm run db:local ou configurez .env.local.",
   );
+const transactionPool = new URL(connectionString).port === "6543";
+const serverless = Boolean(process.env.VERCEL);
 const globalDb = globalThis as unknown as {
   catamotiveSql?: ReturnType<typeof postgres>;
 };
 export const sqlClient =
   globalDb.catamotiveSql ??
-  postgres(connectionString, { max: 5, idle_timeout: 20, connect_timeout: 10 });
+  postgres(connectionString, {
+    max: serverless || transactionPool ? 1 : 5,
+    prepare: !transactionPool,
+    ...(transactionPool ? { max_pipeline: 1 } : {}),
+    idle_timeout: 20,
+    connect_timeout: 10,
+  });
 if (process.env.NODE_ENV !== "production") globalDb.catamotiveSql = sqlClient;
 export const db = drizzle(sqlClient, { schema });
