@@ -26,6 +26,8 @@ import {
   type QualityCounts,
 } from "@/domain/catalog";
 import { normalizeRow, similarity, statusFor } from "@/domain/normalization";
+import { enqueue } from "./integration/outbox";
+import { dispatchMode } from "./integration/dispatch";
 
 export type Actor = Pick<Identity, "userId" | "organizationId">;
 export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -117,9 +119,20 @@ export async function saveMapping(
   });
   return diagnostic;
 }
-export async function queueImport(actor: Actor, id: string) {
+export type QueueResult = {
+  /** False when the import was already queued, processing or ready (idempotent call). */
+  queued: boolean;
+  /** Outbox message id when the command was handed to the broker. */
+  messageId: string | null;
+  route: string | null;
+};
+export async function queueImport(
+  actor: Actor,
+  id: string,
+  options: { correlationId?: string } = {},
+): Promise<QueueResult> {
   await getImport(actor, id);
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     await lockImport(tx, id);
     const [job] = await tx
       .select()
@@ -130,7 +143,8 @@ export async function queueImport(actor: Actor, id: string) {
           eq(importJobs.organizationId, actor.organizationId),
         ),
       );
-    if (["queued", "processing", "ready"].includes(job.status)) return;
+    if (["queued", "processing", "ready"].includes(job.status))
+      return { queued: false, messageId: null, route: null };
     if (!job.mapping || !job.rules)
       throw new HttpError(422, "Validez le mapping avant le traitement.");
     await tx
@@ -140,6 +154,22 @@ export async function queueImport(actor: Actor, id: string) {
     await tx
       .insert(auditEvents)
       .values({ ...actor, action: "processing.queued", entityId: id });
+    if (dispatchMode() !== "queue")
+      return { queued: true, messageId: null, route: null };
+    // Same transaction as the state change: transactional outbox.
+    const sent = await enqueue(
+      tx,
+      {
+        type: "import.process",
+        organizationId: actor.organizationId,
+        importId: id,
+        requestedBy: actor.userId,
+        sourceFormat: job.diagnostic.format ?? "csv",
+        rowCount: job.diagnostic.rowCount,
+      },
+      options.correlationId,
+    );
+    return { queued: true, ...sent };
   });
 }
 function activeIssues(issues: Issue[], decisions: Decision[]) {

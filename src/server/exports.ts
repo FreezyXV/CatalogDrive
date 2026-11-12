@@ -28,15 +28,19 @@ function csvStream(
   records: AsyncIterable<Record<string, string>>,
   config: ExportConfig,
 ) {
-  const output = Readable.from(records).pipe(
-    stringify({
-      header: true,
-      delimiter: config.delimiter,
-      record_delimiter: "\r\n",
-      bom: config.encoding === "utf-8-bom",
-      cast: { string: safeCsvCell },
-    }),
-  );
+  const stringifier = stringify({
+    header: true,
+    delimiter: config.delimiter,
+    record_delimiter: "\r\n",
+    bom: config.encoding === "utf-8-bom",
+    cast: { string: safeCsvCell },
+  });
+  const source = Readable.from(records);
+  // `.pipe()` does not forward errors: without this, an error raised while
+  // producing records (e.g. "no exportable row") left the output stream open
+  // forever and the export request hung.
+  source.on("error", (error) => stringifier.destroy(error));
+  const output = source.pipe(stringifier);
   if (config.encoding !== "windows-1252")
     return Readable.toWeb(output) as ReadableStream<Uint8Array>;
   const validate = new Transform({

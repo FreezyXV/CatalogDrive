@@ -1,10 +1,12 @@
 import { requireIdentity } from "@/server/auth";
+import { authorize } from "@/server/auth/rbac";
 import { getFileStore } from "@/server/storage";
 import { checkOrigin, errorResponse, HttpError } from "@/server/http";
 export async function POST(request: Request) {
   try {
     checkOrigin(request);
     const actor = await requireIdentity();
+    authorize(actor, "import:create");
     const store = getFileStore();
     if (!store.signedUpload)
       throw new HttpError(

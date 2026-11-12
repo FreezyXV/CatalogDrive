@@ -1,0 +1,37 @@
+{
+  "name": "Keycloak",
+  "displayName": "Keycloak (realm catamotive)",
+  "description": "Keycloak est le fournisseur d'identité ; l'APIM valide ses JWT localement (JWKS).",
+  "type": "KeyCloak",
+  "enabled": true,
+  "issuer": "${KC_ISSUER}",
+  "clientRegistrationEndpoint": "${KC_ISSUER}/clients-registrations/openid-connect",
+  "introspectionEndpoint": "${KC_ISSUER}/protocol/openid-connect/token/introspect",
+  "tokenEndpoint": "${KC_ISSUER}/protocol/openid-connect/token",
+  "revokeEndpoint": "${KC_ISSUER}/protocol/openid-connect/revoke",
+  "userInfoEndpoint": "${KC_ISSUER}/protocol/openid-connect/userinfo",
+  "authorizeEndpoint": "${KC_ISSUER}/protocol/openid-connect/auth",
+  "certificates": {
+    "type": "JWKS",
+    "value": "${KC_ISSUER}/protocol/openid-connect/certs"
+  },
+  "consumerKeyClaim": "azp",
+  "scopesClaim": "scope",
+  "availableGrantTypes": [
+    "client_credentials",
+    "authorization_code",
+    "refresh_token"
+  ],
+  "enableTokenGeneration": true,
+  "enableTokenEncryption": false,
+  "enableTokenHashing": false,
+  "enableMapOAuthConsumerApps": true,
+  "enableOAuthAppCreation": false,
+  "enableSelfValidationJWT": true,
+  "tokenType": "DIRECT",
+  "additionalProperties": {
+    "client_id": "wso2-apim",
+    "client_secret": "${APIM_KM_SECRET}",
+    "self_validate_jwt": true
+  }
+}

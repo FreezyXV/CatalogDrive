@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { requireIdentity } from "@/server/auth";
+import { authorize } from "@/server/auth/rbac";
 import { getFileStore } from "@/server/storage";
 import { checkOrigin, errorResponse, HttpError, readJson } from "@/server/http";
 
@@ -20,6 +21,7 @@ export async function POST(request: Request) {
   try {
     checkOrigin(request);
     const actor = await requireIdentity();
+    authorize(actor, "import:create");
     const store = getFileStore();
     const body = command.parse(await readJson(request));
     if (

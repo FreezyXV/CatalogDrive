@@ -1,0 +1,759 @@
+openapi: 3.1.0
+info:
+  title: CataMotive Public API
+  version: 1.0.0
+  summary: Intégration machine-à-machine des catalogues fournisseurs.
+  description: |
+    API publique de CataMotive, conçue **avant** son implémentation (API-first).
+    Ce fichier est le contrat : les Route Handlers `src/app/api/v1/**` sont
+    vérifiés contre lui par `tests/unit/openapi-contract.test.ts`.
+
+    Parcours type d'un partenaire (ERP, PIM, intégrateur) :
+
+    1. `POST /imports` : déposer un fichier fournisseur (CSV, TSV, TXT, XLS, XLSX, ODS).
+    2. `PUT /imports/{importId}/mapping` : associer les colonnes au modèle pivot.
+    3. `POST /imports/{importId}/processing` : lancer le traitement **asynchrone**
+       (202 Accepted). La commande transite par RabbitMQ.
+    4. `GET /imports/{importId}` : suivre l'état jusqu'à `ready` ou `failed`.
+    5. `GET /imports/{importId}/rejected-lines` : récupérer les lignes rejetées et leurs motifs.
+    6. `POST /imports/{importId}/exports` : demander un export WooCommerce, PrestaShop,
+       Shopify ou générique (202 Accepted, routé selon la cible).
+    7. `GET /export-requests/{requestId}` puis téléchargement du fichier et du rapport.
+
+    **Sécurité** : jetons OAuth 2.0 (JWT) émis par le fournisseur d'identité
+    (Keycloak ou WSO2 Identity Server). L'organisation est portée par le jeton,
+    jamais par un paramètre de la requête. Le backend revalide le jeton même
+    derrière la passerelle (défense en profondeur).
+
+    **Throttling** : appliqué par WSO2 API Manager (politique `CataMotiveGold`
+    ou `CataMotiveBronze` selon l'abonnement). Un dépassement renvoie `429`.
+
+    **Versionnement** : la version majeure est dans le chemin (`/v1`). Les évolutions
+    de `v1` sont uniquement additives (nouveaux champs optionnels, nouvelles routes).
+    Une rupture crée `/v2` ; `v1` reçoit alors les en-têtes `Deprecation` et `Sunset`
+    pendant au moins six mois.
+  contact:
+    name: CataMotive
+  license:
+    name: Propriétaire
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: http://127.0.0.1:3000/api/v1
+    description: Backend direct (développement)
+  - url: https://localhost:8243/catamotive/v1
+    description: Via WSO2 API Manager (gateway, throttling, analytics)
+security:
+  - oauth2: [catalog:read]
+tags:
+  - name: Imports
+  - name: Processing
+  - name: Exports
+  - name: System
+paths:
+  /health:
+    get:
+      tags: [System]
+      operationId: getHealth
+      summary: Santé du service (sans authentification).
+      security: []
+      responses:
+        "200":
+          description: Service opérationnel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /imports:
+    get:
+      tags: [Imports]
+      operationId: listImports
+      summary: Lister les 100 derniers imports de l'organisation.
+      security:
+        - oauth2: [catalog:read]
+      responses:
+        "200":
+          description: Imports de l'organisation du jeton.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Import"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Imports]
+      operationId: createImport
+      summary: Déposer un fichier fournisseur.
+      description: |
+        Le corps est le fichier brut (flux). Le nom est passé en paramètre
+        `filename` : son extension détermine le lecteur et, plus tard,
+        la file de traitement (`text` ou `spreadsheet`).
+      security:
+        - oauth2: [catalog:write]
+      parameters:
+        - name: filename
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 180
+            pattern: "^[^/\\\\]+\\.(csv|tsv|txt|xls|xlsx|ods)$"
+          example: tarifs-fournisseur-2026.csv
+        - $ref: "#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Fichier stocké et diagnostiqué (encodage, séparateur, en-têtes).
+          headers:
+            Location:
+              description: URL de la ressource créée.
+              schema:
+                type: string
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Import"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+  /imports/{importId}:
+    parameters:
+      - $ref: "#/components/parameters/ImportId"
+    get:
+      tags: [Imports]
+      operationId: getImport
+      summary: État, diagnostic et compteurs qualité d'un import.
+      security:
+        - oauth2: [catalog:read]
+      responses:
+        "200":
+          description: Import trouvé dans l'organisation du jeton.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Import"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /imports/{importId}/mapping:
+    parameters:
+      - $ref: "#/components/parameters/ImportId"
+    put:
+      tags: [Imports]
+      operationId: putImportMapping
+      summary: Associer les colonnes du fichier au modèle pivot.
+      description: |
+        Idempotent : renvoyer le même mapping produit le même état.
+        Refusé (409) une fois le traitement lancé.
+      security:
+        - oauth2: [catalog:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MappingRequest"
+      responses:
+        "200":
+          description: Mapping enregistré ; l'import passe à l'état `mapped`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Import"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+  /imports/{importId}/processing:
+    parameters:
+      - $ref: "#/components/parameters/ImportId"
+    post:
+      tags: [Processing]
+      operationId: startProcessing
+      summary: Lancer la normalisation de façon asynchrone.
+      description: |
+        Enregistre la commande `import.process` dans l'outbox transactionnelle,
+        dans la même transaction que le passage à l'état `queued`. Le relais la
+        publie sur RabbitMQ ; le routeur choisit la file selon le format du
+        fichier (`import.process.text` ou `import.process.spreadsheet`).
+        Appel idempotent : un import déjà en file ou traité renvoie 202 sans
+        nouvelle commande.
+      security:
+        - oauth2: [catalog:write]
+      responses:
+        "202":
+          description: Commande acceptée.
+          headers:
+            Location:
+              description: Ressource à interroger pour suivre l'état.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessingAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+  /imports/{importId}/rejected-lines:
+    parameters:
+      - $ref: "#/components/parameters/ImportId"
+    get:
+      tags: [Processing]
+      operationId: listRejectedLines
+      summary: Lignes rejetées (invalides) et leurs motifs.
+      description: |
+        Les mêmes lignes sont publiées, par lots, sur le canal
+        `catamotive.rejected` (file `q.rejected-lines`) pour les consommateurs
+        asynchrones, par exemple une notification au fournisseur.
+      security:
+        - oauth2: [catalog:read]
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            default: 1
+      responses:
+        "200":
+          description: Page de 50 lignes au plus, triées par numéro de ligne source.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RejectedLinesPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /imports/{importId}/exports:
+    parameters:
+      - $ref: "#/components/parameters/ImportId"
+    post:
+      tags: [Exports]
+      operationId: requestExport
+      summary: Demander un export vers une cible (asynchrone).
+      description: |
+        La commande `export.generate` est routée selon la cible :
+        WooCommerce, PrestaShop et Shopify vont dans `q.export.cms`
+        (précontrôles CMS), `generic` et `custom` dans `q.export.file`.
+      security:
+        - oauth2: [catalog:export]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportRequestInput"
+      responses:
+        "202":
+          description: Demande acceptée.
+          headers:
+            Location:
+              description: Ressource de suivi de la demande.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+  /export-requests/{requestId}:
+    parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Exports]
+      operationId: getExportRequest
+      summary: Suivre une demande d'export.
+      security:
+        - oauth2: [catalog:read]
+      responses:
+        "200":
+          description: État de la demande et liens de téléchargement une fois prête.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /exports/{exportId}/{kind}:
+    parameters:
+      - name: exportId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: kind
+        in: path
+        required: true
+        description: "`file` pour le catalogue, `report` pour le rapport de transformations."
+        schema:
+          type: string
+          enum: [file, report]
+    get:
+      tags: [Exports]
+      operationId: downloadExport
+      summary: Télécharger le catalogue exporté ou son rapport.
+      security:
+        - oauth2: [catalog:read]
+      responses:
+        "200":
+          description: Fichier CSV (stockage local).
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        "302":
+          description: Redirection vers une URL signée d'une minute (stockage S3).
+          headers:
+            Location:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      description: |
+        Jetons JWT signés (RS256) émis par Keycloak, realm `catamotive`.
+        Audience attendue : `catamotive-api`. Les intégrations serveur utilisent
+        `client_credentials` ; les applications agissant pour un utilisateur
+        utilisent `authorization_code` avec PKCE et MFA.
+      flows:
+        clientCredentials:
+          tokenUrl: http://127.0.0.1:8080/realms/catamotive/protocol/openid-connect/token
+          scopes:
+            catalog:read: Lire imports, lignes rejetées et exports.
+            catalog:write: Déposer des fichiers, enregistrer un mapping, lancer un traitement.
+            catalog:export: Demander un export vers une cible.
+        authorizationCode:
+          authorizationUrl: http://127.0.0.1:8080/realms/catamotive/protocol/openid-connect/auth
+          tokenUrl: http://127.0.0.1:8080/realms/catamotive/protocol/openid-connect/token
+          scopes:
+            catalog:read: Lire imports, lignes rejetées et exports.
+            catalog:write: Déposer des fichiers, enregistrer un mapping, lancer un traitement.
+            catalog:export: Demander un export vers une cible.
+  parameters:
+    ImportId:
+      name: importId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      description: Identifiant fourni par l'appelant, propagé jusqu'aux messages RabbitMQ.
+      schema:
+        type: string
+        maxLength: 64
+        pattern: "^[A-Za-z0-9._-]+$"
+  headers:
+    CorrelationId:
+      description: Identifiant de corrélation (reçu ou généré).
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Requête mal formée.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: Jeton absent, expiré, mal signé ou d'une autre audience.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: Jeton valide mais scope, rôle ou organisation insuffisant.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: Ressource absente de l'organisation du jeton.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: État incompatible (traitement en cours, import non prêt...).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PayloadTooLarge:
+      description: Fichier au-delà de la limite configurée.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unprocessable:
+      description: Contenu illisible ou configuration invalide.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Problem:
+      description: Erreur au format RFC 9457 (Problem Details).
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          example: https://catamotive.dev/problems/forbidden
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        correlationId:
+          type: string
+    Health:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        version:
+          type: string
+        dispatch:
+          type: string
+          enum: [inline, queue]
+          description: Mode d'exécution des traitements.
+    ImportStatus:
+      type: string
+      enum: [analyzed, mapped, queued, processing, ready, failed, deleting]
+    QualityCounts:
+      type: object
+      properties:
+        total: { type: integer }
+        valid: { type: integer }
+        ambiguous: { type: integer }
+        invalid: { type: integer }
+        excluded: { type: integer }
+        duplicates: { type: integer }
+        transformed: { type: integer }
+    Import:
+      type: object
+      required: [id, status, file, diagnostic, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/ImportStatus"
+        file:
+          type: object
+          required: [name, sizeBytes, sha256]
+          properties:
+            name: { type: string }
+            sizeBytes: { type: integer }
+            sha256: { type: string }
+        diagnostic:
+          type: object
+          required: [format, headers, rowCount]
+          properties:
+            format:
+              type: string
+              enum: [csv, xlsx, xls, ods]
+            encoding: { type: string }
+            delimiter: { type: string }
+            sheet: { type: string }
+            headers:
+              type: array
+              items: { type: string }
+            rowCount: { type: integer }
+            warnings:
+              type: array
+              items: { type: string }
+        processedCount:
+          type: integer
+        counts:
+          oneOf:
+            - $ref: "#/components/schemas/QualityCounts"
+            - type: "null"
+        error:
+          type: [string, "null"]
+        links:
+          type: object
+          additionalProperties:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+    Field:
+      type: string
+      description: Champ du modèle pivot (canonical data model).
+      enum:
+        - supplier_reference
+        - sku
+        - oem_reference
+        - ean
+        - brand
+        - product_name
+        - description
+        - category
+        - purchase_price
+        - sale_price
+        - currency
+        - tax_rate
+        - stock_quantity
+        - condition
+        - manufacturer_reference
+        - vehicle_information_raw
+        - engine_code_raw
+        - year_from_raw
+        - year_to_raw
+        - image_urls
+    MappingRequest:
+      type: object
+      required: [mapping]
+      properties:
+        mapping:
+          type: object
+          description: Champ pivot -> index de colonne (0 = première colonne).
+          propertyNames:
+            $ref: "#/components/schemas/Field"
+          additionalProperties:
+            type: integer
+            minimum: 0
+            maximum: 199
+          example: { sku: 0, product_name: 1, sale_price: 3 }
+        rules:
+          type: object
+          description: Règles de normalisation ; valeurs par défaut si absent.
+          properties:
+            stripReferenceSeparators: { type: boolean }
+            normalizeBrands: { type: boolean }
+            brandAliases:
+              type: object
+              additionalProperties: { type: string }
+            defaultCurrency: { type: string, example: EUR }
+            priceBasis:
+              type: string
+              enum: [excl_tax, incl_tax]
+            required:
+              type: array
+              items:
+                $ref: "#/components/schemas/Field"
+            fuzzyDuplicates: { type: boolean }
+        readOptions:
+          type: object
+          properties:
+            headerLine: { type: integer, minimum: 1, maximum: 1000 }
+            delimiter:
+              type: string
+              enum: [",", ";", "\t"]
+            encoding:
+              type: string
+              enum: [utf-8, utf-16le, windows-1252]
+            sheet: { type: string }
+        templateName:
+          type: string
+          maxLength: 80
+          description: Enregistre aussi le mapping comme modèle fournisseur réutilisable.
+    ProcessingAccepted:
+      type: object
+      required: [importId, status]
+      properties:
+        importId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/ImportStatus"
+        messageId:
+          type: [string, "null"]
+          format: uuid
+          description: Identifiant du message d'outbox (null si l'import était déjà en file).
+        route:
+          type: [string, "null"]
+          description: Clé de routage calculée par le routeur de contenu.
+          example: import.process.spreadsheet
+    Issue:
+      type: object
+      required: [field, code, severity, message]
+      properties:
+        field: { type: string }
+        code: { type: string, example: ean_checksum }
+        severity:
+          type: string
+          enum: [error, warning]
+        original: { type: string }
+        suggestion: { type: string }
+        message: { type: string }
+    RejectedLine:
+      type: object
+      required: [sourceLine, raw, issues]
+      properties:
+        sourceLine:
+          type: integer
+          description: Numéro de ligne dans le fichier source.
+        raw:
+          type: array
+          items: { type: string }
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/Issue"
+    RejectedLinesPage:
+      type: object
+      required: [items, page, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RejectedLine"
+        page: { type: integer }
+        total: { type: integer }
+    ExportProfile:
+      type: string
+      enum: [generic, woocommerce, prestashop, shopify, custom]
+    ExportRequestInput:
+      type: object
+      required: [profile]
+      properties:
+        profile:
+          $ref: "#/components/schemas/ExportProfile"
+        columns:
+          type: array
+          description: Obligatoire pour `custom` ; sinon colonnes par défaut du profil.
+          maxItems: 30
+          items:
+            type: object
+            required: [field, header]
+            properties:
+              field: { type: string }
+              header: { type: string, maxLength: 100 }
+        delimiter:
+          type: string
+          enum: [",", ";", "\t"]
+        encoding:
+          type: string
+          enum: [utf-8, utf-8-bom, windows-1252]
+        priceBasis:
+          type: string
+          enum: [excl_tax, incl_tax]
+    ExportRequest:
+      type: object
+      required: [id, importId, profile, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        importId:
+          type: string
+          format: uuid
+        profile:
+          $ref: "#/components/schemas/ExportProfile"
+        status:
+          type: string
+          enum: [queued, processing, ready, failed]
+        route:
+          type: [string, "null"]
+          example: export.generate.shopify
+        exportId:
+          type: [string, "null"]
+          format: uuid
+        rowCount:
+          type: [integer, "null"]
+        rejectedCount:
+          type: [integer, "null"]
+        error:
+          type: [string, "null"]
+        links:
+          type: object
+          additionalProperties:
+            type: string
+        createdAt:
+          type: string
+          format: date-time

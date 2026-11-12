@@ -1,0 +1,13 @@
+{
+  "policyName": "CataMotiveBronze",
+  "displayName": "CataMotive Bronze",
+  "description": "Essai partenaire, 5 requêtes par minute (démonstration du 429)",
+  "defaultLimit": {
+    "type": "REQUESTCOUNTLIMIT",
+    "requestCount": { "timeUnit": "min", "unitTime": 1, "requestCount": 5 }
+  },
+  "rateLimitCount": 0,
+  "rateLimitTimeUnit": "sec",
+  "stopOnQuotaReach": true,
+  "billingPlan": "FREE"
+}

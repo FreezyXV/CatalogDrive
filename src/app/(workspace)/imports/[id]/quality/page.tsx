@@ -7,6 +7,7 @@ import { listExports } from "@/server/exports";
 import { LIMITS } from "@/domain/csv";
 import { HttpError } from "@/server/http";
 import { QualityReview } from "@/components/quality-review";
+import { JobStatusPoller } from "@/components/job-status-poller";
 export default async function QualityPage({
   params,
   searchParams,
@@ -62,8 +63,13 @@ export default async function QualityPage({
           </h1>
           <p>
             {job.error ??
-              `${job.processedCount} ligne(s) enregistrée(s). Rechargez cette page dans quelques instants.`}
+              (job.status === "queued"
+                ? "Commande en file d’attente : le worker d’intégration va la prendre en charge."
+                : `${job.processedCount} ligne(s) enregistrée(s). Cette page se met à jour automatiquement.`)}
           </p>
+          {["queued", "processing"].includes(job.status) ? (
+            <JobStatusPoller />
+          ) : null}
           <Link className="button secondary" href={`/imports/${id}/mapping`}>
             Revenir au mapping
           </Link>

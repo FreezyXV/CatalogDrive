@@ -43,6 +43,24 @@ Le fichier [public/demo/fournisseur-demo.csv](public/demo/fournisseur-demo.csv) 
 - Sécurité CSV : les cellules susceptibles d’être interprétées comme formules sont neutralisées dans les exports dérivés. L’original reste inchangé et est signalé comme tel.
 - Traitement : jobs PostgreSQL, verrouillage, lots bornés à 1 000 lignes ou 8 Mio, reprise bornée et idempotence des mesures d’usage. Le traitement HTTP est synchrone et plafonné à 300 secondes ; un worker local est également fourni.
 
+## Couche d’intégration (branche `integration-lab`)
+
+CataMotive s’ouvre aux ERP, PIM et intégrateurs sans changer son métier :
+
+- **API publique REST** `/api/v1`, conçue avant le code ([contrat OpenAPI 3.1](openapi/catamotive-public-api.v1.yaml)) et vérifiée contre lui à chaque `npm test`. OAuth2, Problem Details, corrélation, 202 Accepted.
+- **Traitements asynchrones** : outbox transactionnelle → RabbitMQ → worker. Routage selon le contenu (format source, cible d’export), files quorum, échange alternatif, file d’erreurs (DLQ) et canal des lignes rejetées.
+- **Identité** : SSO OIDC (Keycloak ou WSO2 Identity Server) avec code + PKCE et MFA TOTP obligatoire. RBAC admin / opérateur / relecteur par organisation, provisionnement et révocation depuis l’IdP.
+- **Passerelle** : WSO2 API Manager avec Keycloak comme Key Manager, abonnements, scopes par ressource et throttling Bronze (5/min) / Gold (100/min).
+
+Tout est désactivé par défaut (`JOB_DISPATCH=inline`, pas d’`OIDC_ISSUER`) : le pilote en production garde son comportement. Documentation : [architecture](docs/integration/ARCHITECTURE.md), [décisions](docs/integration/ADR.md), [mise en route et démonstration](docs/integration/RUNBOOK.md).
+
+```sh
+npm run worker:queue        # relais outbox + consommateurs RabbitMQ
+npm run consumer:rejected   # exemple de consommateur aval des lignes rejetées
+node --import tsx scripts/verify-sso.ts                                   # SSO + MFA + RBAC
+NODE_TLS_REJECT_UNAUTHORIZED=0 node --import tsx scripts/verify-gateway.ts  # parcours via WSO2
+```
+
 ## Déploiement Vercel + Supabase
 
 Le pilote est déployé sur Vercel avec PostgreSQL et Storage Supabase. Son [domaine de production](https://catalog-drive.vercel.app/) est accessible publiquement. Aucun secret n’est commité. Les conditions de commercialisation sont détaillées dans [docs/COMMERCIALISATION.md](docs/COMMERCIALISATION.md).
@@ -94,14 +112,19 @@ Vitest utilise exclusivement `.env.test` et refuse une base dont le nom n’est 
 src/app/                 pages et Route Handlers App Router
 src/components/          formulaires et interface responsive
 src/domain/              schéma, règles, CSV et profils d’export
-src/server/auth/         comptes, sessions et mots de passe
+src/app/api/v1/          API publique (contrat dans openapi/)
+src/server/api/          authentification Bearer, Problem Details, représentations
+src/server/auth/         comptes, sessions, mots de passe, OIDC et RBAC
+src/server/integration/  messages, routeur, topologie, outbox, consommateurs
 src/server/db/           schéma PostgreSQL/Drizzle
 src/server/storage/      adaptateurs local et S3/Supabase
 src/server/catalog.ts    jobs, normalisation, doublons et revue
 src/server/exports.ts    génération en flux et rapports
 drizzle/                 migrations SQL versionnées
 tests/                   tests unitaires, intégration et Playwright
-docs/                    conception, risques et preuves de vérification
+openapi/                 contrat OpenAPI 3.1 de l’API publique
+infra/                   Keycloak, WSO2 API Manager, docker-compose du lab
+docs/                    conception, intégration, risques et preuves de vérification
 ```
 
 Les hypothèses, risques et décisions d’architecture sont détaillés dans [docs/CONCEPTION.md](docs/CONCEPTION.md). Les contrôles réellement exécutés sont consignés dans [docs/VERIFICATION.md](docs/VERIFICATION.md).

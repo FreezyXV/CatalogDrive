@@ -1,0 +1,13 @@
+{
+  "policyName": "CataMotiveGold",
+  "displayName": "CataMotive Gold",
+  "description": "Partenaire en production, 100 requêtes par minute",
+  "defaultLimit": {
+    "type": "REQUESTCOUNTLIMIT",
+    "requestCount": { "timeUnit": "min", "unitTime": 1, "requestCount": 100 }
+  },
+  "rateLimitCount": 0,
+  "rateLimitTimeUnit": "sec",
+  "stopOnQuotaReach": true,
+  "billingPlan": "FREE"
+}

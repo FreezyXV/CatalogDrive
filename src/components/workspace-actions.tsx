@@ -21,8 +21,13 @@ export function LogoutButton() {
               method: "POST",
             });
             if (!response.ok) throw new Error();
-            router.push("/connexion");
-            router.refresh();
+            const data = (await response.json()) as { redirect?: string };
+            // SSO accounts also end the identity provider session.
+            if (data.redirect) window.location.assign(data.redirect);
+            else {
+              router.push("/connexion");
+              router.refresh();
+            }
           } catch {
             setError("Déconnexion impossible.");
           } finally {

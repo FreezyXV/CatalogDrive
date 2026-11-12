@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { requireIdentity } from "@/server/auth";
+import { authorize } from "@/server/auth/rbac";
 import { checkOrigin, errorResponse, readJson } from "@/server/http";
 import { organizationSummary, updateOrganization } from "@/server/organization";
 
@@ -18,6 +19,7 @@ export async function PATCH(request: Request) {
   try {
     checkOrigin(request);
     const actor = await requireIdentity();
+    authorize(actor, "organization:manage");
     return Response.json(
       await updateOrganization(
         actor,

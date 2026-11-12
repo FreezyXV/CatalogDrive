@@ -4,6 +4,7 @@ import { Brand } from "./brand";
 import { LogoutButton } from "./workspace-actions";
 import { WorkspaceNav } from "./workspace-nav";
 import type { Identity } from "@/server/auth";
+import { ROLE_LABELS } from "@/server/auth/rbac";
 export function WorkspaceShell({
   identity,
   children,
@@ -51,7 +52,9 @@ export function WorkspaceShell({
             </span>
             <div className="account-name">
               <strong>{identity.organizationName}</strong>
-              <small>Propriétaire</small>
+              <small>
+                {ROLE_LABELS[identity.role]} · {identity.email}
+              </small>
             </div>
             <LogoutButton />
           </div>

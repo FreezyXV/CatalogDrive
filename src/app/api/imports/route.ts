@@ -1,4 +1,5 @@
 import { requireIdentity } from "@/server/auth";
+import { authorize } from "@/server/auth/rbac";
 import {
   importCsv,
   importSignedUpload,
@@ -13,6 +14,7 @@ export async function POST(request: Request) {
   try {
     checkOrigin(request);
     const identity = await requireIdentity();
+    authorize(identity, "import:create");
     if (request.headers.get("content-type")?.includes("application/json")) {
       const body = (await readJson(request)) as {
         key?: string;

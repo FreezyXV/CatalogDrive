@@ -33,8 +33,8 @@ export async function POST(
     checkOrigin(request);
     const { action } = await context.params;
     if (action === "logout") {
-      await logout();
-      return Response.json({ ok: true });
+      const redirect = await logout();
+      return Response.json({ ok: true, redirect });
     }
     if (action !== "login" && action !== "register")
       throw new HttpError(404, "Action inconnue.");

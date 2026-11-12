@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, ne, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   users,
@@ -14,12 +14,15 @@ import {
 } from "@/server/db/schema";
 import { hashPassword, hashToken, verifyPassword } from "./password";
 import { HttpError } from "@/server/http";
+import { normalizeRole, type Role } from "./rbac";
+import { discover, oidcConfig } from "./oidc";
 export const SESSION_COOKIE = "catamotive_session";
 export type Identity = {
   userId: string;
   organizationId: string;
   email: string;
   organizationName: string;
+  role: Role;
 };
 export async function currentIdentity(): Promise<Identity | null> {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
@@ -30,18 +33,27 @@ export async function currentIdentity(): Promise<Identity | null> {
       organizationId: organizations.id,
       email: users.email,
       organizationName: organizations.name,
+      role: memberships.role,
     })
     .from(sessions)
     .innerJoin(users, eq(sessions.userId, users.id))
     .innerJoin(organizations, eq(sessions.organizationId, organizations.id))
+    .innerJoin(
+      memberships,
+      and(
+        eq(memberships.userId, sessions.userId),
+        eq(memberships.organizationId, sessions.organizationId),
+      ),
+    )
     .where(
       and(
         eq(sessions.tokenHash, hashToken(token)),
         gt(sessions.expiresAt, new Date()),
+        ne(memberships.role, "revoked"),
       ),
     )
     .limit(1);
-  return identity ?? null;
+  return identity ? { ...identity, role: normalizeRole(identity.role) } : null;
 }
 export async function requireIdentity() {
   const identity = await currentIdentity();
@@ -139,7 +151,7 @@ export async function registerAccount(
       .returning();
     await tx
       .insert(memberships)
-      .values({ userId: user.id, organizationId: org.id });
+      .values({ userId: user.id, organizationId: org.id, role: "admin" });
     await tx.insert(auditEvents).values({
       userId: user.id,
       organizationId: org.id,
@@ -165,7 +177,9 @@ export async function authenticate(email: string, password: string) {
   const [membership] = await db
     .select()
     .from(memberships)
-    .where(eq(memberships.userId, user.id))
+    .where(
+      and(eq(memberships.userId, user.id), ne(memberships.role, "revoked")),
+    )
     .limit(1);
   if (!membership) throw new HttpError(403, "Aucune organisation accessible.");
   return { userId: user.id, organizationId: membership.organizationId };
@@ -200,8 +214,15 @@ export async function createSession(identity: {
     expires,
   });
 }
-export async function logout() {
+/** Returns the identity provider logout URL when the account is an SSO account. */
+export async function logout(): Promise<string | null> {
   const identity = await currentIdentity();
+  const [account] = identity
+    ? await db
+        .select({ oidcSubject: users.oidcSubject })
+        .from(users)
+        .where(eq(users.id, identity.userId))
+    : [];
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   if (token)
@@ -216,4 +237,17 @@ export async function logout() {
         });
     });
   jar.delete(SESSION_COOKIE);
+  return account?.oidcSubject ? ssoLogoutUrl() : null;
+}
+async function ssoLogoutUrl() {
+  const config = oidcConfig();
+  if (!config) return null;
+  const discovery = await discover(config.issuer).catch(() => null);
+  if (!discovery?.end_session_endpoint) return null;
+  const url = new URL(discovery.end_session_endpoint);
+  url.search = new URLSearchParams({
+    client_id: config.clientId,
+    post_logout_redirect_uri: `${process.env.APP_ORIGIN ?? "http://127.0.0.1:3000"}/connexion`,
+  }).toString();
+  return url.toString();
 }

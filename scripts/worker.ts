@@ -3,6 +3,11 @@ config({
   path: process.env.APP_ENV === "test" ? ".env.test" : ".env.local",
   quiet: true,
 });
+// Queue mode: RabbitMQ consumers replace PostgreSQL polling.
+if (process.env.JOB_DISPATCH === "queue") {
+  await import("./integration-worker");
+  process.exit(0);
+}
 const { runNextJob } = await import("../src/server/catalog");
 const { sqlClient } = await import("../src/server/db");
 let stopping = false;

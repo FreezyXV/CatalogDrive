@@ -29,6 +29,20 @@
       "when": 1790581625373,
       "tag": "0003_complete_mindworm",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794519143429,
+      "tag": "0004_integration_messaging",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794519758470,
+      "tag": "0005_oidc_identity",
+      "breakpoints": true
     }
   ]
 }

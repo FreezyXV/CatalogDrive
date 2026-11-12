@@ -1,0 +1,26 @@
+{
+  "name": "CataMotivePublicAPI",
+  "description": "API publique CataMotive : import, normalisation asynchrone et export de catalogues fournisseurs.",
+  "version": "v1",
+  "context": "/catamotive",
+  "policies": ["CataMotiveBronze", "CataMotiveGold"],
+  "keyManagers": ["Keycloak"],
+  "securityScheme": ["oauth2", "oauth_basic_auth_api_key_mandatory"],
+  "transport": ["https"],
+  "endpointConfig": {
+    "endpoint_type": "http",
+    "production_endpoints": { "url": "${BACKEND_URL}" },
+    "sandbox_endpoints": { "url": "${BACKEND_URL}" }
+  },
+  "corsConfiguration": {
+    "corsConfigurationEnabled": true,
+    "accessControlAllowOrigins": ["*"],
+    "accessControlAllowHeaders": [
+      "Authorization",
+      "Content-Type",
+      "X-Correlation-ID",
+      "X-Organization-ID"
+    ],
+    "accessControlAllowMethods": ["GET", "PUT", "POST", "DELETE", "OPTIONS"]
+  }
+}

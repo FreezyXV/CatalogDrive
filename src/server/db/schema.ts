@@ -29,6 +29,8 @@ export const users = pgTable("users", {
   id: uuid().defaultRandom().primaryKey(),
   email: text().notNull().unique(),
   passwordHash: text("password_hash").notNull(),
+  /** `sub` of the OIDC identity provider; null for local password accounts. */
+  oidcSubject: text("oidc_subject").unique(),
   emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
@@ -264,6 +266,69 @@ export const usageRecords = pgTable("usage_records", {
   idempotencyKey: text("idempotency_key").notNull().unique(),
   createdAt: createdAt(),
 });
+/**
+ * Transactional outbox: a message is written in the same PostgreSQL
+ * transaction as the state change it announces, then relayed to RabbitMQ
+ * with publisher confirms. This removes the dual-write problem
+ * (database committed but message lost, or the reverse).
+ */
+export const outboxMessages = pgTable(
+  "outbox_messages",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    type: text().notNull(),
+    payload: jsonb().$type<Record<string, unknown>>().notNull(),
+    correlationId: text("correlation_id").notNull(),
+    status: text().notNull().default("pending"),
+    route: text(),
+    attempts: integer().notNull().default(0),
+    lastError: text("last_error"),
+    availableAt: timestamp("available_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("outbox_pending").on(t.status, t.availableAt)],
+);
+export const exportRequests = pgTable(
+  "export_requests",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    importId: uuid("import_id").notNull(),
+    requestedBy: uuid("requested_by").notNull(),
+    profile: text().notNull(),
+    config: jsonb().$type<ExportConfig>().notNull(),
+    status: text().notNull().default("queued"),
+    route: text(),
+    exportId: uuid("export_id"),
+    rowCount: integer("row_count"),
+    rejectedCount: integer("rejected_count"),
+    attempts: integer().notNull().default(0),
+    error: text(),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    index("export_requests_org_import").on(t.organizationId, t.importId),
+    foreignKey({
+      name: "export_requests_import_org_fk",
+      columns: [t.importId, t.organizationId],
+      foreignColumns: [importJobs.id, importJobs.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "export_requests_member_fk",
+      columns: [t.requestedBy, t.organizationId],
+      foreignColumns: [memberships.userId, memberships.organizationId],
+    }),
+  ],
+);
 export const accountTokens = pgTable("account_tokens", {
   tokenHash: text("token_hash").primaryKey(),
   userId: uuid("user_id")

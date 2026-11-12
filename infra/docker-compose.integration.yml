@@ -1,0 +1,77 @@
+# Integration lab infrastructure: PostgreSQL, RabbitMQ, Keycloak, WSO2 API Manager.
+# The Next.js app and its worker run on the host (npm run dev / npm start).
+#
+#   docker compose -f infra/docker-compose.integration.yml up -d
+#
+# Prerequisite: `127.0.0.1 keycloak` in /etc/hosts, so that the token issuer
+# (http://keycloak:8080/realms/catamotive) is the same for the browser, the
+# app and the gateway container.
+#
+# LAB ONLY: every password and secret below is a public demo value.
+# See docs/integration/RUNBOOK.md.
+name: catamotive-integration
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: catamotive
+      POSTGRES_PASSWORD: catamotive-lab-only
+      POSTGRES_DB: catamotive
+    ports: ["55439:5432"]
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catamotive"]
+      interval: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: catamotive
+      RABBITMQ_DEFAULT_PASS: catamotive-lab-only
+      RABBITMQ_DEFAULT_VHOST: catamotive
+    ports:
+      - "5672:5672" # AMQP
+      - "15672:15672" # management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin-lab-only
+      KC_HOSTNAME: http://keycloak:8080
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: catamotive
+      KC_DB_PASSWORD: catamotive-lab-only
+    ports: ["8080:8080"]
+    volumes:
+      - ./keycloak/realm-catamotive.json:/opt/keycloak/data/import/realm-catamotive.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  wso2am:
+    image: wso2/wso2am:4.5.0
+    ports:
+      - "9443:9443" # Publisher, Devportal, Admin, REST APIs
+      - "8243:8243" # gateway HTTPS
+      - "8280:8280" # gateway HTTP
+    volumes:
+      - ./wso2-apim/deployment.toml:/home/wso2carbon/wso2am-4.5.0/repository/conf/deployment.toml:ro
+    extra_hosts:
+      # The gateway calls the app running on the host.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - keycloak
+
+volumes:
+  pg-data:

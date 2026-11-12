@@ -1,4 +1,5 @@
 import { requireIdentity } from "@/server/auth";
+import { authorize } from "@/server/auth/rbac";
 import { getImport, removeImport } from "@/server/imports";
 import { checkOrigin, errorResponse } from "@/server/http";
 type Context = { params: Promise<{ id: string }> };
@@ -23,6 +24,7 @@ export async function DELETE(request: Request, context: Context) {
   try {
     checkOrigin(request);
     const identity = await requireIdentity();
+    authorize(identity, "import:delete");
     await removeImport(identity, (await context.params).id);
     return Response.json({ ok: true });
   } catch (error) {

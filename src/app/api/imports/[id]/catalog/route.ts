@@ -20,6 +20,8 @@ import {
   suggestMapping,
 } from "@/domain/catalog";
 import { exportConfigSchema } from "@/domain/exports";
+import { dispatchMode } from "@/server/integration/dispatch";
+import { authorize } from "@/server/auth/rbac";
 const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("inspect"), options: readOptionsSchema }),
   z.object({
@@ -55,6 +57,7 @@ export async function POST(
     const body = command.parse(await readJson(request, 128 * 1024));
     const imported = await getImport(actor, id);
     if (body.action === "inspect") {
+      authorize(actor, "mapping:edit");
       if (["processing", "queued"].includes(imported.job.status))
         throw new HttpError(409, "Traitement en cours.");
       const diagnostic = await inspectSource(
@@ -68,6 +71,9 @@ export async function POST(
         mapping: suggestMapping(diagnostic.headers),
       });
     }
+    if (body.action === "mapping") authorize(actor, "mapping:edit");
+    if (body.action === "review") authorize(actor, "row:review");
+    if (body.action === "export") authorize(actor, "export:create");
     if (body.action === "mapping")
       return Response.json({
         diagnostic: await saveMapping(
@@ -80,9 +86,12 @@ export async function POST(
         ),
       });
     if (body.action === "process") {
+      authorize(actor, "processing:start");
       await queueImport(actor, id);
-      await runJob(id);
-      return Response.json({ ok: true });
+      // Inline (default): the request runs the job. Queue: the outbox relay
+      // hands the command to RabbitMQ and the integration worker runs it.
+      if (dispatchMode() === "inline") await runJob(id);
+      return Response.json({ ok: true, dispatch: dispatchMode() });
     }
     if (body.action === "review")
       return Response.json({
