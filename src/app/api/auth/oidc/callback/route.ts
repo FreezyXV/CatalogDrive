@@ -70,7 +70,10 @@ export async function GET(request: Request) {
     if (claims.nonce !== saved.data.nonce)
       throw new HttpError(401, "Nonce invalide.");
 
-    const { user, granted } = await provisionPrincipal(claims);
+    const { user, granted } = await provisionPrincipal(claims, {
+      groupsClaim: config.groupsClaim,
+      selfSignup: config.selfSignup,
+    });
     const [organizationId] = granted.keys();
     await createSession({ userId: user.id, organizationId });
   } catch (error) {

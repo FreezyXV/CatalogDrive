@@ -143,7 +143,40 @@ async function tryImport(browser: Browser) {
   return { status: response.status, body: await response.json() };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+async function verifySelfSignup() {
+  // A user with no organization group (like a Google account through Auth0)
+  // must get a personal organization where they are admin.
+  const { browser, steps, landing } = await ssoLogin("sam.social");
+  const page = await landing.response.text();
+  const created = await tryImport(browser);
+  const social = await fetch(`${APP}/api/auth/oidc/login?connection=google`, {
+    redirect: "manual",
+  });
+  const target = new URL(social.headers.get("location") ?? APP);
+  console.log(
+    JSON.stringify(
+      {
+        user: "sam.social (aucun groupe)",
+        steps,
+        personalOrganization: /Espace de Sam Social/.test(page),
+        role: /Administrateur/.test(page) ? "admin" : "?",
+        importAttempt: created.status,
+        socialButtonHint: Object.fromEntries(
+          [...target.searchParams].filter(([k]) =>
+            ["connection", "kc_idp_hint"].includes(k),
+          ),
+        ),
+      },
+      null,
+      2,
+    ),
+  );
+  if (created.status !== 201 || !/Espace de Sam Social/.test(page))
+    process.exitCode = 1;
+}
+
+if (process.argv.includes("--self-signup")) await verifySelfSignup();
+else if (import.meta.url === `file://${process.argv[1]}`) {
   for (const [user, expected] of [
     ["rita.reviewer", 403],
     ["oscar.operator", 201],

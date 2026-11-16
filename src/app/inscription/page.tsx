@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { Brand } from "@/components/brand";
 import { AuthForm } from "@/components/auth-form";
+import { SsoButtons } from "@/components/sso-buttons";
+import { oidcConfig } from "@/server/auth/oidc";
 export default function Register() {
+  const sso = oidcConfig();
   return (
     <main className="auth-page">
       <Link href="/">
@@ -15,6 +18,7 @@ export default function Register() {
           vos catalogues.
         </h1>
         <p>Créez votre compte et votre organisation.</p>
+        {sso ? <SsoButtons connections={sso.connections} signup /> : null}
         <AuthForm register />
         <p className="auth-switch">
           Déjà un compte ? <Link href="/connexion">Se connecter</Link>

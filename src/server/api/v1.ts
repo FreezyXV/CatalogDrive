@@ -87,7 +87,9 @@ export async function requireApiPrincipal(
         `error="insufficient_scope", scope="${scope}"`,
       ),
     });
-  const { user, granted } = await provisionPrincipal(claims);
+  const { user, granted } = await provisionPrincipal(claims, {
+    groupsClaim: config.groupsClaim,
+  });
   const requested = request.headers.get("x-organization-id")?.toLowerCase();
   if (!requested && granted.size > 1)
     throw new ApiError(

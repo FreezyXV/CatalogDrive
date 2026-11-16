@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { KeyRound } from "lucide-react";
 import { Brand } from "@/components/brand";
 import { AuthForm } from "@/components/auth-form";
+import { SsoButtons } from "@/components/sso-buttons";
 import { oidcConfig } from "@/server/auth/oidc";
 export default async function Login({
   searchParams,
@@ -9,7 +9,7 @@ export default async function Login({
   searchParams: Promise<{ sso_error?: string }>;
 }) {
   const { sso_error: ssoError } = await searchParams;
-  const sso = oidcConfig() !== null;
+  const sso = oidcConfig();
   return (
     <main className="auth-page">
       <Link href="/">
@@ -23,25 +23,7 @@ export default async function Login({
         </h1>
         <p>Connectez-vous pour retrouver vos imports.</p>
         {sso ? (
-          <>
-            {/* A full page navigation is required: the route handler redirects
-                to the identity provider (another origin). <Link> would try a
-                client-side transition and prefetch it. */}
-            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-            <a className="button primary full" href="/api/auth/oidc/login">
-              <KeyRound size={17} />
-              Se connecter avec le SSO de l’entreprise
-            </a>
-            {ssoError ? (
-              <p role="alert" className="form-error">
-                {ssoError.slice(0, 200)}
-              </p>
-            ) : null}
-            <p className="fine-print">
-              Authentification à deux facteurs exigée par le fournisseur
-              d’identité.
-            </p>
-          </>
+          <SsoButtons connections={sso.connections} error={ssoError} />
         ) : null}
         <AuthForm />
         <p className="auth-switch">

@@ -112,6 +112,74 @@ describe("provisionnement juste-à-temps depuis le fournisseur d’identité", (
     ).rejects.toMatchObject({ status: 403 });
   });
 
+  it("inscription libre (Google via Auth0) : organisation personnelle admin, sans doublon", async () => {
+    const socialSub = `google-oauth2|${randomUUID()}`;
+    const claims = {
+      sub: socialSub,
+      email: `social-${randomUUID()}@example.test`,
+      email_verified: true,
+      name: "Ivan Test",
+    };
+    await expect(provisionPrincipal(claims)).rejects.toMatchObject({
+      status: 403,
+    });
+    const first = await provisionPrincipal(claims, { selfSignup: true });
+    const [[orgId, role]] = [...first.granted];
+    expect(role).toBe("admin");
+    const [org] = await db
+      .select()
+      .from(organizations)
+      .where(eq(organizations.id, orgId));
+    expect(org.name).toBe("Espace de Ivan Test");
+    const again = await provisionPrincipal(claims, { selfSignup: true });
+    expect([...again.granted.keys()]).toEqual([orgId]);
+    expect(
+      await db
+        .select()
+        .from(memberships)
+        .where(eq(memberships.userId, first.user.id)),
+    ).toHaveLength(1);
+    await db.delete(sessions).where(eq(sessions.userId, first.user.id));
+    await db.delete(auditEvents).where(eq(auditEvents.userId, first.user.id));
+    await db.delete(memberships).where(eq(memberships.userId, first.user.id));
+    await db.delete(users).where(eq(users.id, first.user.id));
+    await db.delete(organizations).where(eq(organizations.id, orgId));
+  });
+
+  it("connexion sociale d’un membre existant : ses organisations sont gardées, rien n’est révoqué", async () => {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.oidcSubject, sub));
+    const before = await db
+      .select({ org: memberships.organizationId, role: memberships.role })
+      .from(memberships)
+      .where(eq(memberships.userId, user.id));
+    const { granted } = await provisionPrincipal(
+      { sub, email, email_verified: true },
+      { selfSignup: true },
+    );
+    expect(Object.fromEntries(granted)).toEqual({ [orgA]: "admin" });
+    const after = await db
+      .select({ org: memberships.organizationId, role: memberships.role })
+      .from(memberships)
+      .where(eq(memberships.userId, user.id));
+    expect(after).toEqual(before);
+  });
+
+  it("lit les groupes dans un claim personnalisé (Action Auth0)", async () => {
+    const { granted } = await provisionPrincipal(
+      {
+        sub,
+        email,
+        email_verified: true,
+        "https://catamotive.app/groups": [`/organizations/${orgA}/operator`],
+      } as Parameters<typeof provisionPrincipal>[0],
+      { groupsClaim: "https://catamotive.app/groups" },
+    );
+    expect(Object.fromEntries(granted)).toEqual({ [orgA]: "operator" });
+  });
+
   it("ne lie pas un compte local sur la base d’un email non vérifié", async () => {
     const { user } = await provisionPrincipal({
       sub,

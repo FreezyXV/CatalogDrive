@@ -5,7 +5,11 @@ import {
   can,
   normalizeRole,
 } from "../../src/server/auth/rbac";
-import { membershipsFromGroups } from "../../src/server/auth/oidc";
+import {
+  membershipsFromGroups,
+  organizationNameFor,
+  parseConnections,
+} from "../../src/server/auth/oidc";
 
 const ORG = "9b2f5c7e-1d3a-4e8b-a6c4-0f1e2d3c4b5a";
 const OTHER = "3c8a1f0e-6b2d-4f7a-9e15-c2d4b6a8e0f1";
@@ -86,5 +90,27 @@ describe("claim groups → organisations et rôles", () => {
     ]);
     expect(result.size).toBe(0);
     expect(membershipsFromGroups(undefined).size).toBe(0);
+  });
+});
+
+describe("connexions sociales", () => {
+  it("lit la liste OIDC_SOCIAL_CONNECTIONS et écarte les identifiants douteux", () => {
+    expect(
+      parseConnections(
+        "google-oauth2:Google, windowslive:Microsoft,github,bad id:X",
+      ),
+    ).toEqual([
+      { id: "google-oauth2", label: "Google" },
+      { id: "windowslive", label: "Microsoft" },
+      { id: "github", label: "github" },
+    ]);
+    expect(parseConnections(undefined)).toEqual([]);
+  });
+
+  it("nomme l’organisation personnelle d’après le profil", () => {
+    expect(organizationNameFor({ name: "Ivan" })).toBe("Espace de Ivan");
+    expect(organizationNameFor({ email: "ivan@example.test" })).toBe(
+      "Espace de ivan",
+    );
   });
 });

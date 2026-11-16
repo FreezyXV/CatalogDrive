@@ -29,12 +29,36 @@ import { normalizeRole, type Role } from "./rbac";
  *   /organizations/<organization-uuid>/<admin|operator|reviewer>
  */
 export type OidcConfig = {
+  /** Issuer without trailing slash, used to build the discovery URL. */
   issuer: string;
   clientId: string;
   clientSecret: string;
   redirectUri: string;
   apiAudience: string;
+  /** Claim holding `/organizations/<id>/<role>` paths (Auth0 needs a namespaced claim). */
+  groupsClaim: string;
+  /** Sign-in without organization groups creates a personal organization. */
+  selfSignup: boolean;
+  /** Buttons that send the user straight to one upstream provider (Google…). */
+  connections: SocialConnection[];
+  /** Authorization parameter carrying the connection: Auth0 `connection`, Keycloak `kc_idp_hint`. */
+  connectionParam: string;
 };
+export type SocialConnection = { id: string; label: string };
+
+/** `google-oauth2:Google,windowslive:Microsoft` → [{id, label}, …] */
+export function parseConnections(raw: string | undefined): SocialConnection[] {
+  return (raw ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [id, label] = entry.split(":");
+      return { id: id.trim(), label: (label ?? id).trim() };
+    })
+    .filter((c) => /^[A-Za-z0-9._-]{1,64}$/.test(c.id))
+    .slice(0, 6);
+}
 
 export function oidcConfig(): OidcConfig | null {
   const issuer = process.env.OIDC_ISSUER?.replace(/\/$/, "");
@@ -47,6 +71,10 @@ export function oidcConfig(): OidcConfig | null {
     redirectUri:
       process.env.OIDC_REDIRECT_URI ?? `${origin}/api/auth/oidc/callback`,
     apiAudience: process.env.OIDC_API_AUDIENCE ?? "catamotive-api",
+    groupsClaim: process.env.OIDC_GROUPS_CLAIM ?? "groups",
+    selfSignup: process.env.OIDC_SELF_SIGNUP !== "false",
+    connections: parseConnections(process.env.OIDC_SOCIAL_CONNECTIONS),
+    connectionParam: process.env.OIDC_CONNECTION_PARAM ?? "connection",
   };
 }
 
@@ -75,7 +103,7 @@ export function discover(issuer: string) {
     }).then(async (response) => {
       if (!response.ok) throw new Error(`OIDC discovery ${response.status}`);
       const document = (await response.json()) as Discovery;
-      if (document.issuer !== issuer)
+      if (document.issuer.replace(/\/$/, "") !== issuer)
         throw new Error("OIDC discovery: issuer inattendu");
       return document;
     });
@@ -103,6 +131,7 @@ export type TokenClaims = JWTPayload & {
   email_verified?: boolean;
   azp?: string;
   nonce?: string;
+  name?: string;
   preferred_username?: string;
 };
 
@@ -112,8 +141,10 @@ export async function verifyJwt(
   audience: string,
   config: OidcConfig = requireOidcConfig(),
 ) {
+  // The exact issuer string comes from discovery: Auth0's ends with "/".
+  const { issuer } = await discover(config.issuer);
   const { payload } = await jwtVerify(token, await keySet(config.issuer), {
-    issuer: config.issuer,
+    issuer,
     audience,
     algorithms: ["RS256", "PS256", "ES256"],
     clockTolerance: 30,
@@ -152,10 +183,37 @@ export function scopesOf(claims: TokenClaims) {
  * Organizations missing from the token are revoked locally and their
  * sessions closed (leaver process).
  */
-export async function provisionPrincipal(claims: TokenClaims) {
+export type ProvisionOptions = {
+  /** Claim to read the organization groups from. */
+  groupsClaim?: string;
+  /**
+   * Browser sign-in only: a person whose token carries no organization
+   * groups (Google, Auth0 social login…) gets or keeps a personal
+   * organization where they are admin. Machine clients never self-sign-up.
+   */
+  selfSignup?: boolean;
+};
+
+export function organizationNameFor(claims: TokenClaims) {
+  const name =
+    (typeof claims.name === "string" && claims.name.trim()) ||
+    (claims.email ?? "").split("@")[0] ||
+    "nouvel utilisateur";
+  return `Espace de ${name}`.slice(0, 80);
+}
+
+export async function provisionPrincipal(
+  claims: TokenClaims,
+  options: ProvisionOptions = {},
+) {
   if (!claims.sub) throw new HttpError(401, "Jeton sans sujet.");
-  const granted = membershipsFromGroups(claims.groups);
-  if (!granted.size)
+  const granted = membershipsFromGroups(
+    (claims as Record<string, unknown>)[options.groupsClaim ?? "groups"],
+  );
+  // The IdP manages memberships only when it sends groups; otherwise the
+  // local memberships (self-signup) are kept and nothing is revoked.
+  const managed = granted.size > 0;
+  if (!managed && !options.selfSignup)
     throw new HttpError(
       403,
       "Votre compte n’est rattaché à aucune organisation CataMotive.",
@@ -194,6 +252,37 @@ export async function provisionPrincipal(claims: TokenClaims) {
           })
           .returning();
       }
+    }
+    if (!managed) {
+      const own = await tx
+        .select({
+          organizationId: memberships.organizationId,
+          role: memberships.role,
+        })
+        .from(memberships)
+        .where(
+          and(eq(memberships.userId, user.id), ne(memberships.role, "revoked")),
+        );
+      for (const m of own) granted.set(m.organizationId, normalizeRole(m.role));
+      if (!granted.size) {
+        const [organization] = await tx
+          .insert(organizations)
+          .values({ name: organizationNameFor(claims) })
+          .returning();
+        await tx.insert(memberships).values({
+          userId: user.id,
+          organizationId: organization.id,
+          role: "admin",
+        });
+        await tx.insert(auditEvents).values({
+          userId: user.id,
+          organizationId: organization.id,
+          action: "organization.self_signup",
+          entityId: organization.id,
+        });
+        granted.set(organization.id, "admin");
+      }
+      return { user, granted };
     }
     for (const [organizationId, role] of granted) {
       await tx
