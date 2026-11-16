@@ -498,6 +498,7 @@ flowchart LR
   GH --> CI[Actions : CI<br/>format · lint · types ·<br/>tests PostgreSQL · build]
   GH --> MIG[Actions : Migrate database<br/>migrations + contrôle du schéma]
   GH --> VC[Vercel<br/>build Next.js]
+  VC -- déploiement réussi --> SM[Actions : Smoke test<br/>parcours complet en production]
   VC --> FN[Fonctions serverless<br/>+ cron quotidien]
   FN -- pooler PgBouncer --> NEON[(Neon PostgreSQL)]
   MIG -- URL directe --> NEON
@@ -521,6 +522,8 @@ Variables Vercel (Production et Preview) :
 | `UPLOAD_MAX_BYTES`                         | facultatif, 50 Mo par défaut                                         |
 
 Secret GitHub Actions : `DATABASE_URL_UNPOOLED` = URL Neon **directe** (sans `-pooler`). Le workflow `Migrate database` applique les migrations à chaque push sur `main` qui touche `drizzle/` ou `src/server/db/`, puis vérifie le schéma avec `scripts/check-schema.ts`. Il se lance aussi à la main depuis l'onglet Actions. Le build Vercel n'exécute pas de migration.
+
+Après chaque déploiement de production réussi, le workflow `Smoke test production` ([`scripts/smoke-production.ts`](scripts/smoke-production.ts)) rejoue le parcours complet sur le site réel : page d'accueil, santé de l'API, inscription, dépôt par URL signée vers B2, diagnostic, mapping, normalisation, export, téléchargement puis suppression de l'import. Un compte jetable `smoke-…@example.test` est créé à chaque exécution.
 
 La connexion PostgreSQL ([`src/server/db/connection.ts`](src/server/db/connection.ts)) s'adapte au fournisseur :
 

@@ -1,0 +1,29 @@
+# End-to-end check of the live production deployment (Vercel → Neon → B2).
+name: Smoke test production
+
+on:
+  deployment_status:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment.environment == 'Production')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Parcours complet sur la production
+        env:
+          APP_URL: https://catalog-drive.vercel.app
+        run: node --import tsx scripts/smoke-production.ts
