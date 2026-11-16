@@ -2,7 +2,7 @@
 
 CataMotive transforme des catalogues fournisseurs hétérogènes (CSV, TSV, TXT délimité, XLS, XLSX, ODS ou ZIP mixtes) en fichiers contrôlés pour WooCommerce, PrestaShop, Shopify ou un format personnalisé. Le parcours complet fonctionne : compte et organisation, import, diagnostic, mapping réutilisable, normalisation déterministe, revue humaine, export et rapport de transformations.
 
-L'application expose aussi une **API publique** pour les ERP, PIM et intégrateurs, une **file de messages** pour les traitements longs, une **connexion SSO avec MFA** et un **contrôle d'accès par rôles**. Elle peut être placée derrière une **passerelle WSO2 API Manager**.
+L'application expose aussi une **API publique** pour les ERP, PIM et intégrateurs, une **file de messages** pour les traitements longs, une **connexion SSO avec MFA** et un **contrôle d'accès par rôles**. Elle peut être placée derrière une **passerelle WSO2 API Manager**. En production : Vercel, **Neon** (PostgreSQL) et **Backblaze B2** (fichiers).
 
 Le produit conserve les données automobiles déclarées comme valeurs brutes. Il ne déduit aucune compatibilité véhicule/pièce et n'intègre aucune donnée TecDoc ou sous licence.
 
@@ -17,8 +17,9 @@ Le produit conserve les données automobiles déclarées comme valeurs brutes. I
 - [Traitements asynchrones (RabbitMQ)](#traitements-asynchrones-rabbitmq)
 - [Passerelle WSO2 API Manager](#passerelle-wso2-api-manager)
 - [Stockage des fichiers](#stockage-des-fichiers)
+- [Technologies, méthodes et techniques](#technologies-méthodes-et-techniques)
 - [Démarrage local](#démarrage-local)
-- [Déploiement Vercel + Supabase](#déploiement-vercel--supabase)
+- [Déploiement : Vercel, Neon, Backblaze B2, GitHub Actions](#déploiement--vercel-neon-backblaze-b2-github-actions)
 - [Tests et validation](#tests-et-validation)
 - [Structure du dépôt](#structure-du-dépôt)
 - [Limites connues](#limites-connues)
@@ -55,17 +56,17 @@ flowchart LR
   W --> SVC
 ```
 
-| Couche          | Technologie                                                      |
-| --------------- | ---------------------------------------------------------------- |
-| Interface       | Next.js 16 (App Router), React 19, Tailwind CSS 4, lucide-react  |
-| Serveur         | Route Handlers Next.js, TypeScript strict, zod                   |
-| Données         | PostgreSQL 16/17, Drizzle ORM, migrations SQL versionnées        |
-| Fichiers        | Système de fichiers local ou S3 (Supabase Storage, Backblaze B2) |
-| Lecture tableur | exceljs (XLSX/ODS en flux), SheetJS (anciens XLS), csv-parse     |
-| Messagerie      | RabbitMQ (amqplib), outbox transactionnelle                      |
-| Identité        | Sessions cookie + scrypt ; OIDC (jose) avec Keycloak ou WSO2 IS  |
-| Passerelle      | WSO2 API Manager 4.5                                             |
-| Tests           | Vitest, Playwright                                               |
+| Couche          | Technologie                                                              |
+| --------------- | ------------------------------------------------------------------------ |
+| Interface       | Next.js 16 (App Router), React 19, Tailwind CSS 4, lucide-react          |
+| Serveur         | Route Handlers Next.js, TypeScript strict, zod                           |
+| Données         | PostgreSQL (Neon en production), Drizzle ORM, migrations SQL versionnées |
+| Fichiers        | Système de fichiers local ou stockage S3 (Backblaze B2)                  |
+| Lecture tableur | exceljs (XLSX/ODS en flux), SheetJS (anciens XLS), csv-parse             |
+| Messagerie      | RabbitMQ (amqplib), outbox transactionnelle                              |
+| Identité        | Sessions cookie + scrypt ; OIDC (jose) avec Keycloak ou WSO2 IS          |
+| Passerelle      | WSO2 API Manager 4.5                                                     |
+| Tests et CI     | Vitest, Playwright, GitHub Actions                                       |
 
 Les briques d'intégration sont **désactivées par défaut** : sans `OIDC_ISSUER`, ni SSO ni API publique ; sans `JOB_DISPATCH=queue`, les traitements restent synchrones. Le déploiement Vercel fonctionne donc sans broker ni fournisseur d'identité.
 
@@ -84,7 +85,7 @@ flowchart LR
 ```
 
 1. Créer un compte et une organisation (ou se connecter par SSO).
-2. Importer un catalogue : 50 Mo maximum en production Supabase, 200 Mo sur la Preview B2 ; voir [les bornes par format](docs/FORMATS.md).
+2. Importer un catalogue : 50 Mo par défaut (`UPLOAD_MAX_BYTES`, jusqu'à 200 Mo validés sur B2) ; voir [les bornes par format](docs/FORMATS.md).
 3. Vérifier encodage, séparateur, feuille, ligne d'en-tête, types et aperçu.
 4. Corriger le mapping proposé et, si besoin, l'enregistrer comme modèle fournisseur.
 5. Choisir les règles puis lancer le traitement.
@@ -359,12 +360,112 @@ flowchart LR
 
 ## Stockage des fichiers
 
-`STORAGE_DRIVER=local` écrit sous `.local/`. `STORAGE_DRIVER=s3` utilise un stockage compatible S3 (Supabase Storage en production, B2 en Preview) :
+`STORAGE_DRIVER=local` écrit sous `.local/`. `STORAGE_DRIVER=s3` utilise un stockage compatible S3 (Backblaze B2 en production). Les fichiers ne transitent jamais par les fonctions Vercel : le navigateur les envoie directement au stockage avec des URL signées.
 
-- fichiers de plus de 5 Mio envoyés en parties de 5 Mio via des URL signées de 10 minutes, quatre en parallèle, 180 s et trois tentatives par partie ;
+```mermaid
+sequenceDiagram
+  autonumber
+  actor U as Navigateur
+  participant A as CataMotive
+  participant S as Stockage S3 (B2)
+  U->>A: POST /api/uploads/multipart (nom, taille)
+  A->>S: CreateMultipartUpload
+  A-->>U: URL signées (10 min) pour chaque partie de 5 Mio
+  par 4 parties en parallèle
+    U->>S: PUT partie n (180 s, 3 tentatives)
+  end
+  U->>A: terminer (ETags)
+  A->>S: CompleteMultipartUpload, contrôle de la taille
+  A->>S: relecture en flux : SHA-256, diagnostic
+  A-->>U: import créé
+```
+
+- fichiers de moins de 5 Mio : une seule URL signée de 5 minutes ;
 - taille et empreinte SHA-256 recalculées côté serveur avant de créer l'import ;
 - téléchargements par URL signées d'une minute après contrôle de la session et de l'organisation ;
-- conservation par organisation appliquée par le cron quotidien `/api/maintenance`.
+- conservation par organisation appliquée par le cron quotidien `/api/maintenance` ; un multipart abandonné est annulé.
+
+## Technologies, méthodes et techniques
+
+### Architecture en couches
+
+```mermaid
+flowchart TB
+  P["Présentation<br/>pages React, composants client"] --> H["Adaptateurs d'entrée<br/>Route Handlers /api et /api/v1, worker"]
+  H --> SEC["Sécurité<br/>session, JWT, scopes, RBAC, Origin"]
+  SEC --> APP["Services applicatifs<br/>transactions, jobs, outbox"]
+  APP --> DOM["Domaine pur<br/>formats, règles, profils d'export"]
+  APP --> INFRA["Adaptateurs de sortie<br/>PostgreSQL, S3, RabbitMQ, IdP"]
+```
+
+Le domaine ne dépend d'aucune infrastructure : les règles se testent sans base ni réseau. Le stockage (local ou S3) et la messagerie (RabbitMQ ou mémoire) sont des ports avec plusieurs adaptateurs, ce qui permet de tester le même code dans les deux cas.
+
+### Méthodes et techniques appliquées
+
+| Domaine          | Technique                                                                                                     | Où                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Conception d'API | API-first : contrat OpenAPI 3.1 écrit avant le code, test de conformité                                       | `openapi/`, `tests/unit/openapi-contract.test.ts`       |
+| Conception d'API | REST, 202 Accepted pour le travail long, Problem Details (RFC 9457), corrélation                              | `src/server/api/v1.ts`                                  |
+| Intégration      | Modèle canonique (pivot de 20 champs), Message Translator                                                     | `src/domain/catalog.ts`, `normalization.ts`             |
+| Intégration      | Content-Based Router, échange alternatif, Dead Letter Channel                                                 | `src/server/integration/router.ts`, `topology.ts`       |
+| Intégration      | Outbox transactionnelle, consommateurs idempotents, Competing Consumers                                       | `outbox.ts`, `handlers.ts`                              |
+| Données          | Transactions, `SELECT … FOR UPDATE SKIP LOCKED`, verrous par import                                           | `src/server/catalog.ts`                                 |
+| Données          | Clés étrangères composées `(id, organization_id)` pour l'isolation                                            | `src/server/db/schema.ts`                               |
+| Données          | Migrations SQL versionnées, appliquées par CI                                                                 | `drizzle/`, `.github/workflows/migrate.yml`             |
+| Performance      | Lecture en flux (XLSX, ODS, CSV), lots de 1 000 lignes, export en flux                                        | `src/domain/csv.ts`, `src/server/exports.ts`            |
+| Qualité          | Doublons probables : similarité de Sørensen-Dice sur bigrammes, seuil 0,82, recherche bornée par marque       | `similarity()`                                          |
+| Qualité          | Checksum EAN, décimaux exacts (decimal.js), règles versionnées et traçables                                   | `src/domain/normalization.ts`                           |
+| Sécurité         | OIDC Authorization Code + PKCE, state, nonce ; MFA TOTP                                                       | `src/app/api/auth/oidc/`                                |
+| Sécurité         | OAuth2 client credentials, JWT vérifié par JWKS, scopes + RBAC                                                | `src/server/auth/`                                      |
+| Sécurité         | Mots de passe scrypt, sessions hachées, limitation des tentatives, contrôle `Origin` (CSRF)                   | `src/server/auth/index.ts`                              |
+| Sécurité         | Neutralisation des formules CSV, refus des contenus actifs et classeurs chiffrés, bornes de décompression ZIP | `src/server/exports.ts`, `src/domain/import-formats.ts` |
+| Sécurité         | TLS `verify-full` vers la base, secrets uniquement en variables d'environnement                               | `src/server/db/connection.ts`                           |
+| Exploitation     | Passerelle d'API (WSO2), throttling, journaux JSON corrélés                                                   | `infra/wso2-apim/`, worker                              |
+| Livraison        | CI GitHub Actions, déploiement continu Vercel, infrastructure de lab décrite en code                          | `.github/`, `infra/`                                    |
+
+### Défense en profondeur
+
+```mermaid
+flowchart LR
+  R[Requête] --> L1[TLS]
+  L1 --> L2[Passerelle<br/>abonnement, quota]
+  L2 --> L3[Jeton ou session<br/>signature, expiration]
+  L3 --> L4[Scope OAuth2]
+  L4 --> L5[Rôle RBAC]
+  L5 --> L6[Organisation<br/>du jeton = ressource]
+  L6 --> L7[Validation zod<br/>tailles, formats]
+  L7 --> D[(Données)]
+```
+
+Chaque couche peut refuser seule : un appel qui contournerait la passerelle se heurte encore au jeton, au scope, au rôle et au filtre d'organisation.
+
+### Détection des doublons
+
+```mermaid
+flowchart LR
+  L[Ligne normalisée] --> K{Clé exacte<br/>marque + SKU<br/>déjà vue ?}
+  K -- oui --> X[Doublon exact<br/>score 1]
+  K -- non --> B[Seau : marque +<br/>3 premiers caractères]
+  B --> S[Similarité de bigrammes<br/>avec les SKU du seau]
+  S --> T{score ≥ 0,82 ?}
+  T -- oui --> P[Doublon probable<br/>avertissement, pas de fusion]
+  T -- non --> OK[Ligne unique]
+```
+
+Le regroupement par seau évite de comparer chaque ligne à toutes les autres : la recherche reste bornée même sur 500 000 lignes.
+
+### Génération d'un export
+
+```mermaid
+flowchart LR
+  Q[(processed_rows<br/>lignes valides<br/>et décisions)] --> C[Curseur<br/>par lots]
+  C --> M[Profil d'export<br/>colonnes, prix HT/TTC,<br/>précontrôles CMS]
+  M --> F[Neutralisation<br/>des formules]
+  F --> E[Encodage<br/>UTF-8, BOM, Windows-1252]
+  E --> S[(Stockage<br/>fichier + rapport)]
+```
+
+Le fichier est produit en flux, sans charger le catalogue en mémoire. Si aucune ligne n'est exportable, l'erreur est propagée immédiatement (422) au lieu de laisser le flux ouvert.
 
 ## Démarrage local
 
@@ -389,32 +490,45 @@ OIDC_CLIENT_SECRET=catamotive-web-secret-lab-only
 
 puis lancer `npm run worker:queue` (ou `npm start`, qui démarre le worker adapté au mode). Arrêt de la base : `npm run db:stop`.
 
-## Déploiement Vercel + Supabase
+## Déploiement : Vercel, Neon, Backblaze B2, GitHub Actions
 
-Le pilote est déployé sur Vercel avec PostgreSQL et Storage Supabase. Son [domaine de production](https://catalog-drive.vercel.app/) est public. Aucun secret n'est commité. Conditions de commercialisation : [docs/COMMERCIALISATION.md](docs/COMMERCIALISATION.md).
-
-1. **Appliquer les migrations avant chaque déploiement** : `npm run db:migrate` avec `DATABASE_URL` pointant vers la base Supabase. Le build Vercel ne les exécute pas. Pour Vercel, utiliser le pooler transactionnel Supabase (port 6543) ; les requêtes préparées sont désactivées automatiquement.
-2. Créer deux buckets privés : `catamotive-private` (exports et objets historiques) et `catamotive-uploads` (fichiers source, plafonné à 50 Mo), activer le protocole S3, créer une paire de clés et vérifier multipart, CORS, lecture et suppression.
-3. Configurer dans Vercel :
-
-```text
-DATABASE_URL=postgresql://...
-APP_ORIGIN=https://votre-domaine.vercel.app
-APP_ORIGINS=https://autre-alias.vercel.app   # facultatif
-COOKIE_SECURE=true
-STORAGE_DRIVER=s3
-S3_ENDPOINT=https://<projet>.storage.supabase.co/storage/v1/s3
-S3_REGION=eu-central-1
-S3_BUCKET=catamotive-private
-S3_UPLOAD_BUCKET=catamotive-uploads
-S3_ACCESS_KEY_ID=...
-S3_SECRET_ACCESS_KEY=...
-CRON_SECRET=une-valeur-aleatoire-d-au-moins-32-caracteres
+```mermaid
+flowchart LR
+  DEV[git push main] --> GH[GitHub]
+  GH --> CI[Actions : CI<br/>format · lint · types ·<br/>tests PostgreSQL · build]
+  GH --> MIG[Actions : Migrate database<br/>migrations + contrôle du schéma]
+  GH --> VC[Vercel<br/>build Next.js]
+  VC --> FN[Fonctions serverless<br/>+ cron quotidien]
+  FN -- pooler PgBouncer --> NEON[(Neon PostgreSQL)]
+  MIG -- URL directe --> NEON
+  FN -- URL signées --> B2[(Backblaze B2<br/>buckets privés)]
+  U[Navigateur] --> FN
+  U -- dépôt multipart signé --> B2
 ```
 
-4. Déployer avec le preset Next.js. Les fonctions sont placées à Francfort (`fra1`).
+Variables Vercel (Production et Preview) :
 
-Le projet Vercel relié au dépôt est `catalog-drive` (équipe `ivans-projects-66d9a97b`).
+| Variable                                   | Valeur                                                               |
+| ------------------------------------------ | -------------------------------------------------------------------- |
+| `DATABASE_URL`                             | URL Neon **poolée** (hôte contenant `-pooler`)                       |
+| `APP_ORIGIN`                               | `https://catalog-drive.vercel.app` ; autres alias dans `APP_ORIGINS` |
+| `COOKIE_SECURE`                            | `true`                                                               |
+| `STORAGE_DRIVER`                           | `s3`                                                                 |
+| `S3_ENDPOINT`, `S3_REGION`                 | point de terminaison et région S3 du compte B2                       |
+| `S3_BUCKET`, `S3_UPLOAD_BUCKET`            | buckets privés des exports et des dépôts (CORS limité au domaine)    |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | clé B2 limitée à ces buckets                                         |
+| `CRON_SECRET`                              | valeur aléatoire d'au moins 32 caractères                            |
+| `UPLOAD_MAX_BYTES`                         | facultatif, 50 Mo par défaut                                         |
+
+Secret GitHub Actions : `DATABASE_URL_UNPOOLED` = URL Neon **directe** (sans `-pooler`). Le workflow `Migrate database` applique les migrations à chaque push sur `main` qui touche `drizzle/` ou `src/server/db/`, puis vérifie le schéma avec `scripts/check-schema.ts`. Il se lance aussi à la main depuis l'onglet Actions. Le build Vercel n'exécute pas de migration.
+
+La connexion PostgreSQL ([`src/server/db/connection.ts`](src/server/db/connection.ts)) s'adapte au fournisseur :
+
+- `channel_binding`, ajouté par Neon, est retiré car postgres.js ne le gère pas ;
+- `sslmode=require` devient `verify-full` pour un hôte distant : certificat et nom d'hôte vérifiés ;
+- un pooler transactionnel (`-pooler` chez Neon, port 6543 ailleurs) désactive les requêtes préparées et limite chaque instance serverless à une connexion.
+
+Aucun secret n'est commité. Le projet Vercel relié au dépôt est `catalog-drive` (équipe `ivans-projects-66d9a97b`). Conditions de commercialisation : [docs/COMMERCIALISATION.md](docs/COMMERCIALISATION.md).
 
 ## Tests et validation
 
@@ -429,11 +543,19 @@ npm run test:restart
 npm audit --audit-level=moderate
 ```
 
-Vitest utilise exclusivement `.env.test` et refuse toute base autre que `catamotive_test`. Les suites RabbitMQ réel et API avec jetons Keycloak réels s'activent si `RABBITMQ_URL` et `OIDC_ISSUER` sont définis dans `.env.test`. Scripts de preuve de bout en bout : `scripts/verify-large-catalog.ts` (500 000 lignes), `scripts/verify-sso.ts` (SSO + MFA + RBAC), `scripts/verify-gateway.ts` (parcours via WSO2). Les contrôles réellement exécutés sont consignés dans [docs/VERIFICATION.md](docs/VERIFICATION.md).
+```mermaid
+flowchart LR
+  U[Unitaires<br/>règles, formats, routeur,<br/>RBAC, contrat OpenAPI] --> I[Intégration PostgreSQL<br/>imports, isolation, outbox,<br/>idempotence, DLQ]
+  I --> R[Services réels optionnels<br/>RabbitMQ, jetons Keycloak]
+  R --> E[Bout en bout<br/>Playwright, SSO + MFA,<br/>passerelle WSO2, 500 000 lignes]
+```
+
+Vitest utilise exclusivement `.env.test` et refuse toute base autre que `catamotive_test`. Les suites RabbitMQ et API avec jetons Keycloak réels s'activent si `RABBITMQ_URL` et `OIDC_ISSUER` sont définis dans `.env.test`. Scripts de preuve : `scripts/verify-large-catalog.ts`, `scripts/verify-sso.ts`, `scripts/verify-gateway.ts`. Les contrôles réellement exécutés sont consignés dans [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 ## Structure du dépôt
 
 ```text
+.github/workflows/       CI et migrations de production
 src/app/                 pages et Route Handlers (App Router)
 src/app/api/v1/          API publique (contrat dans openapi/)
 src/components/          formulaires et interface responsive
@@ -441,7 +563,7 @@ src/domain/              lecture des formats, règles, profils d'export (sans I/
 src/server/api/          authentification Bearer, Problem Details, représentations
 src/server/auth/         sessions, mots de passe, OIDC, RBAC
 src/server/integration/  messages, routeur, topologie, outbox, consommateurs
-src/server/db/           schéma PostgreSQL / Drizzle
+src/server/db/           schéma Drizzle, connexion PostgreSQL
 src/server/storage/      adaptateurs local et S3
 src/server/catalog.ts    jobs, normalisation, doublons, revue
 src/server/exports.ts    génération en flux et rapports
@@ -458,8 +580,7 @@ Hypothèses, risques et décisions : [docs/CONCEPTION.md](docs/CONCEPTION.md), [
 ## Limites connues
 
 - Paiement, vérification email, récupération de mot de passe, invitations d'équipe et connexions directes aux CMS ne sont pas intégrés. Les profils CMS produisent un fichier avec précontrôles, sans synchroniser de boutique.
-- Plafond de 500 000 lignes ; les limites de dépôt (50 Mo en production, 200 Mo en Preview), de décompression, d'export (50 Mio), de base et de durée restent distinctes.
+- Plafond de 500 000 lignes ; les limites de dépôt, de décompression, d'export (50 Mio), de base et de durée restent distinctes.
 - Le mode `queue` exige un broker et un worker hébergés ; la production Vercel reste en mode `inline` sans SSO.
 - Un utilisateur SSO membre de plusieurs organisations ouvre sa session sur la première (pas de sélecteur).
-- L'organisation créée à la première connexion SSO porte un nom provisoire.
 - `docker-compose.integration.yml` est validé syntaxiquement ; le lab a été vérifié à partir des distributions officielles (voir [VERIFICATION.md](docs/VERIFICATION.md)).

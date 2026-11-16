@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: catamotive
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: catamotive_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U catamotive"
+          --health-interval 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Fichier .env.test
+        run: |
+          {
+            echo "DATABASE_URL=postgresql://catamotive:ci-only@127.0.0.1:5432/catamotive_test"
+            echo "APP_ORIGIN=http://127.0.0.1:3100"
+            echo "STORAGE_DRIVER=local"
+            echo "LOCAL_STORAGE_DIR=.local/test-uploads"
+            echo "COOKIE_SECURE=false"
+          } > .env.test
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+        env:
+          DATABASE_URL: postgresql://catamotive:ci-only@127.0.0.1:5432/catamotive_test

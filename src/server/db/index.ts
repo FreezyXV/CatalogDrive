@@ -1,12 +1,17 @@
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "./schema";
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString)
+import { isTransactionPooler, normalizeDatabaseUrl } from "./connection";
+// Migrations prefer the direct (unpooled) URL when one is provided.
+const configured =
+  (process.env.DB_MIGRATING === "1" && process.env.DATABASE_URL_UNPOOLED) ||
+  process.env.DATABASE_URL;
+if (!configured)
   throw new Error(
     "DATABASE_URL manque. Exécutez npm run db:local ou configurez .env.local.",
   );
-const transactionPool = new URL(connectionString).port === "6543";
+const connectionString = normalizeDatabaseUrl(configured);
+const transactionPool = isTransactionPooler(connectionString);
 const serverless = Boolean(process.env.VERCEL);
 const globalDb = globalThis as unknown as {
   catamotiveSql?: ReturnType<typeof postgres>;

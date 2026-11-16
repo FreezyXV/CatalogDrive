@@ -6,10 +6,5 @@
       "path": "/api/maintenance",
       "schedule": "0 3 * * *"
     }
-  ],
-  "git": {
-    "deploymentEnabled": {
-      "integration-lab": false
-    }
-  }
+  ]
 }

@@ -1,0 +1,41 @@
+# Applies the Drizzle migrations to the production database (Neon).
+# Runs on every push to main, before or alongside the Vercel deployment,
+# and can be started by hand from the Actions tab.
+# Secret required: DATABASE_URL_UNPOOLED = Neon direct (non "-pooler") URL.
+name: Migrate database
+
+on:
+  push:
+    branches: [main]
+    paths: ["drizzle/**", "src/server/db/**", ".github/workflows/migrate.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrate-production
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Appliquer les migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+        run: |
+          test -n "$DATABASE_URL" || { echo "Secret DATABASE_URL_UNPOOLED manquant"; exit 1; }
+          npm run db:migrate
+      - name: Vérifier le schéma
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
+        run: node --import tsx scripts/check-schema.ts
