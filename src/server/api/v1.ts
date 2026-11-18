@@ -118,6 +118,7 @@ const PROBLEM_TYPES: Record<number, string> = {
   409: "conflict",
   413: "payload-too-large",
   422: "unprocessable",
+  429: "too-many-requests",
   503: "unavailable",
 };
 

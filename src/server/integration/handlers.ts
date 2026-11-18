@@ -1,20 +1,15 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { ZodType } from "zod";
 import { db } from "../db";
-import { exportRequests, importJobs, processedRows } from "../db/schema";
+import { exportRequests, importJobs } from "../db/schema";
 import { processJob } from "../catalog";
 import { createExport } from "../exports";
 import { HttpError } from "../http";
 import type { Delivery, Outcome } from "./broker";
 import { DELIVERY_LIMIT } from "./topology";
-import {
-  exportGenerateCommand,
-  importProcessCommand,
-  type RejectedLinesEvent,
-} from "./messages";
+import { exportGenerateCommand, importProcessCommand } from "./messages";
 import { enqueue } from "./outbox";
-
-export const REJECTED_BATCH_SIZE = 500;
+import { activeExportAttempt } from "./export-state";
 
 function log(event: string, data: Record<string, unknown>) {
   console.log(JSON.stringify({ event, at: new Date().toISOString(), ...data }));
@@ -88,7 +83,9 @@ export async function handleImportProcess(
     delivery: delivery.deliveryCount + 1,
   });
   try {
-    await processJob(job);
+    await processJob(job, {
+      correlationId: delivery.correlationId || undefined,
+    });
   } catch (error) {
     const permanent = isPermanent(error);
     if (!permanent && !lastAttempt(delivery)) {
@@ -108,12 +105,12 @@ export async function handleImportProcess(
       ? (error as Error).message
       : `Le traitement a échoué après ${delivery.deliveryCount + 1} tentatives. Relancez le traitement.`;
     await db.transaction(async (tx) => {
-      await tx
+      const [updated] = await tx
         .update(importJobs)
         .set({ status: "failed", error: message })
-        .where(
-          and(eq(importJobs.id, job.id), eq(importJobs.runId, job.runId!)),
-        );
+        .where(and(eq(importJobs.id, job.id), eq(importJobs.runId, job.runId!)))
+        .returning({ id: importJobs.id });
+      if (!updated) return;
       await enqueue(
         tx,
         {
@@ -131,86 +128,8 @@ export async function handleImportProcess(
     // message and goes to the dead letter queue for investigation.
     return permanent ? "ack" : "reject";
   }
-  const batches = await publishOutcome(job.id, delivery.correlationId);
-  log("import.processing.completed", {
-    importId: job.id,
-    rejectedBatches: batches,
-  });
+  log("import.processing.completed", { importId: job.id });
   return "ack";
-}
-
-/**
- * Publishes the completion event and the rejected lines (status `invalid`,
- * not excluded) in batches, through the outbox, in one transaction.
- */
-export async function publishOutcome(importId: string, correlationId?: string) {
-  return db.transaction(async (tx) => {
-    const [job] = await tx
-      .select()
-      .from(importJobs)
-      .where(eq(importJobs.id, importId));
-    const invalid = and(
-      eq(processedRows.importId, importId),
-      eq(processedRows.organizationId, job.organizationId),
-      eq(processedRows.status, "invalid"),
-      eq(processedRows.excluded, 0),
-    );
-    const [{ total }] = await tx
-      .select({ total: sql<number>`count(*)::int` })
-      .from(processedRows)
-      .where(invalid);
-    const batchCount = Math.ceil(total / REJECTED_BATCH_SIZE);
-    let lastLine = 0;
-    for (let batch = 1; batch <= batchCount; batch++) {
-      const rows = await tx
-        .select({
-          sourceLine: processedRows.sourceLine,
-          raw: processedRows.raw,
-          issues: processedRows.issues,
-        })
-        .from(processedRows)
-        .where(and(invalid, sql`${processedRows.sourceLine} > ${lastLine}`))
-        .orderBy(asc(processedRows.sourceLine))
-        .limit(REJECTED_BATCH_SIZE);
-      lastLine = rows.at(-1)?.sourceLine ?? lastLine;
-      const lines: RejectedLinesEvent["lines"] = rows.map((row) => ({
-        sourceLine: row.sourceLine,
-        raw: row.raw,
-        issues: row.issues
-          .filter((issue) => issue.severity === "error")
-          .map(({ field, code, severity, message }) => ({
-            field,
-            code,
-            severity,
-            message,
-          })),
-      }));
-      await enqueue(
-        tx,
-        {
-          type: "import.lines.rejected",
-          organizationId: job.organizationId,
-          importId,
-          batch,
-          batchCount,
-          lines,
-        },
-        correlationId || undefined,
-      );
-    }
-    await enqueue(
-      tx,
-      {
-        type: "import.processing.completed",
-        organizationId: job.organizationId,
-        importId,
-        counts: (job.counts as Record<string, number> | null) ?? null,
-        error: null,
-      },
-      correlationId || undefined,
-    );
-    return batchCount;
-  });
 }
 
 /** Consumer of q.export.cms and q.export.file. */
@@ -258,14 +177,12 @@ export async function handleExportGenerate(
       actor,
       request.importId,
       request.config,
+      undefined,
+      {
+        attempt: request,
+        notify: { correlationId: delivery.correlationId || undefined },
+      },
     );
-    await finishExport(request.id, delivery.correlationId, {
-      status: "ready",
-      exportId: exported.id,
-      rowCount: exported.rowCount,
-      rejectedCount: exported.rejectedCount,
-      error: null,
-    });
     log("export.completed", { requestId: request.id, exportId: exported.id });
     return "ack";
   } catch (error) {
@@ -274,51 +191,33 @@ export async function handleExportGenerate(
       await db
         .update(exportRequests)
         .set({ status: "queued", updatedAt: new Date() })
-        .where(eq(exportRequests.id, request.id));
+        .where(activeExportAttempt(request));
       return "retry";
     }
-    await finishExport(request.id, delivery.correlationId, {
-      status: "failed",
-      exportId: null,
-      rowCount: null,
-      rejectedCount: null,
-      error: permanent
-        ? (error as Error).message
-        : "L’export a échoué après plusieurs tentatives.",
+    const message = permanent
+      ? (error as Error).message
+      : "L’export a échoué après plusieurs tentatives.";
+    await db.transaction(async (tx) => {
+      const [failed] = await tx
+        .update(exportRequests)
+        .set({ status: "failed", error: message, updatedAt: new Date() })
+        .where(activeExportAttempt(request))
+        .returning({ id: exportRequests.id });
+      if (failed)
+        await enqueue(
+          tx,
+          {
+            type: "export.failed",
+            organizationId: request.organizationId,
+            requestId: request.id,
+            importId: request.importId,
+            exportId: null,
+            error: message,
+          },
+          delivery.correlationId || undefined,
+        );
     });
     log("export.failed", { requestId: request.id, permanent });
     return permanent ? "ack" : "reject";
   }
-}
-
-export async function finishExport(
-  requestId: string,
-  correlationId: string | undefined,
-  result: {
-    status: "ready" | "failed";
-    exportId: string | null;
-    rowCount: number | null;
-    rejectedCount: number | null;
-    error: string | null;
-  },
-) {
-  await db.transaction(async (tx) => {
-    const [request] = await tx
-      .update(exportRequests)
-      .set({ ...result, updatedAt: new Date() })
-      .where(eq(exportRequests.id, requestId))
-      .returning();
-    await enqueue(
-      tx,
-      {
-        type: result.status === "ready" ? "export.completed" : "export.failed",
-        organizationId: request.organizationId,
-        requestId,
-        importId: request.importId,
-        exportId: result.exportId,
-        error: result.error,
-      },
-      correlationId || undefined,
-    );
-  });
 }

@@ -22,6 +22,7 @@ import {
 import { exportConfigSchema } from "@/domain/exports";
 import { dispatchMode } from "@/server/integration/dispatch";
 import { authorize } from "@/server/auth/rbac";
+import { limitOrganizationAction } from "@/server/limits";
 const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("inspect"), options: readOptionsSchema }),
   z.object({
@@ -55,11 +56,15 @@ export async function POST(
     const actor = await requireIdentity();
     const { id } = await context.params;
     const body = command.parse(await readJson(request, 128 * 1024));
-    const imported = await getImport(actor, id);
     if (body.action === "inspect") {
       authorize(actor, "mapping:edit");
-      if (["processing", "queued"].includes(imported.job.status))
-        throw new HttpError(409, "Traitement en cours.");
+      await limitOrganizationAction(actor.organizationId, "mapping");
+      const imported = await getImport(actor, id);
+      if (["processing", "queued", "deleting"].includes(imported.job.status))
+        throw new HttpError(
+          409,
+          "Import en cours de traitement ou de suppression.",
+        );
       const diagnostic = await inspectSource(
         getFileStore(),
         imported.file.storageKey,
@@ -71,10 +76,9 @@ export async function POST(
         mapping: suggestMapping(diagnostic.headers),
       });
     }
-    if (body.action === "mapping") authorize(actor, "mapping:edit");
-    if (body.action === "review") authorize(actor, "row:review");
-    if (body.action === "export") authorize(actor, "export:create");
-    if (body.action === "mapping")
+    if (body.action === "mapping") {
+      authorize(actor, "mapping:edit");
+      await limitOrganizationAction(actor.organizationId, "mapping");
       return Response.json({
         diagnostic: await saveMapping(
           actor,
@@ -85,15 +89,19 @@ export async function POST(
           body.templateName,
         ),
       });
+    }
     if (body.action === "process") {
       authorize(actor, "processing:start");
-      await queueImport(actor, id);
+      await limitOrganizationAction(actor.organizationId, "processing");
+      const result = await queueImport(actor, id);
+      const dispatch = dispatchMode();
       // Inline (default): the request runs the job. Queue: the outbox relay
       // hands the command to RabbitMQ and the integration worker runs it.
-      if (dispatchMode() === "inline") await runJob(id);
-      return Response.json({ ok: true, dispatch: dispatchMode() });
+      if (result.queued && dispatch === "inline") await runJob(id);
+      return Response.json({ ok: true, dispatch });
     }
-    if (body.action === "review")
+    if (body.action === "review") {
+      authorize(actor, "row:review");
       return Response.json({
         counts: await reviewRow(actor, id, body.rowId, {
           version: body.version,
@@ -102,6 +110,9 @@ export async function POST(
           value: body.value,
         }),
       });
+    }
+    authorize(actor, "export:create");
+    await limitOrganizationAction(actor.organizationId, "export");
     return Response.json(
       { export: await createExport(actor, id, body.config, body.templateName) },
       { status: 201 },

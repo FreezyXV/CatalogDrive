@@ -14,6 +14,12 @@ export async function GET(request: Request) {
   let target: string;
   try {
     const config = requireOidcConfig();
+    const incoming = new URL(request.url);
+    const canonical = new URL("/api/auth/oidc/login", config.redirectUri);
+    if (incoming.origin !== canonical.origin) {
+      canonical.search = incoming.search;
+      return Response.redirect(canonical, 307);
+    }
     const { authorization_endpoint } = await discover(config.issuer);
     const login = loginChallenge();
     (await cookies()).set(
@@ -32,7 +38,7 @@ export async function GET(request: Request) {
         maxAge: 600,
       },
     );
-    const query = new URL(request.url).searchParams;
+    const query = incoming.searchParams;
     const url = new URL(authorization_endpoint);
     url.search = new URLSearchParams({
       response_type: "code",

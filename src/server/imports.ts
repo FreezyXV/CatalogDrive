@@ -1,5 +1,5 @@
 import { isCatalogFilename } from "@/domain/import-formats";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createWriteStream } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { db } from "./db";
+import { db, lockTransaction } from "./db";
 import {
   auditEvents,
   exportJobs,
@@ -398,6 +398,28 @@ export async function removeImport(
   store: FileStore = getFileStore(),
 ) {
   const { job, file } = await getImport(actor, id);
+  const ownedImport = and(
+    eq(importJobs.organizationId, actor.organizationId),
+    eq(importJobs.id, id),
+  );
+  await db.transaction(async (tx) => {
+    await lockTransaction(tx, id);
+    const [marked] = await tx
+      .update(importJobs)
+      .set({ status: "deleting" })
+      .where(
+        and(
+          ownedImport,
+          notInArray(importJobs.status, ["queued", "processing"]),
+        ),
+      )
+      .returning({ id: importJobs.id });
+    if (!marked)
+      throw new HttpError(
+        409,
+        "Attendez la fin du traitement avant de supprimer cet import.",
+      );
+  });
   const exports = await db
     .select({
       storageKey: exportJobs.storageKey,
@@ -415,23 +437,17 @@ export async function removeImport(
     await store.remove(item.storageKey);
     await store.remove(item.reportKey);
   }
-  const archivedKey = await db.transaction(async (tx) => {
-    if (job.archiveId)
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${job.archiveId}, 0))`,
-      );
-    await tx
+  await db.transaction(async (tx) => {
+    if (job.archiveId) await lockTransaction(tx, job.archiveId);
+    const [deleted] = await tx
       .delete(importJobs)
-      .where(
-        and(
-          eq(importJobs.organizationId, actor.organizationId),
-          eq(importJobs.id, id),
-        ),
-      );
+      .where(ownedImport)
+      .returning({ id: importJobs.id });
+    if (!deleted) return;
     await tx
       .insert(auditEvents)
       .values({ ...actor, action: "import.deleted", entityId: id });
-    if (!job.archiveId) return null;
+    if (!job.archiveId) return;
     const [remaining] = await tx
       .select({ id: importJobs.id })
       .from(importJobs)
@@ -442,7 +458,7 @@ export async function removeImport(
         ),
       )
       .limit(1);
-    if (remaining) return null;
+    if (remaining) return;
     const [archive] = await tx
       .delete(sourceArchives)
       .where(
@@ -452,9 +468,8 @@ export async function removeImport(
         ),
       )
       .returning({ storageKey: sourceArchives.storageKey });
-    return archive?.storageKey ?? null;
+    if (archive) await store.remove(archive.storageKey);
   });
-  if (archivedKey) await store.remove(archivedKey);
 }
 
 export async function purgeExpiredImports(store: FileStore = getFileStore()) {
@@ -467,17 +482,25 @@ export async function purgeExpiredImports(store: FileStore = getFileStore()) {
     .from(importJobs)
     .innerJoin(organizations, eq(organizations.id, importJobs.organizationId))
     .where(
-      sql`${importJobs.createdAt} < now() - (${organizations.retentionDays} * interval '1 day')`,
+      and(
+        notInArray(importJobs.status, ["queued", "processing"]),
+        sql`${importJobs.createdAt} < now() - (${organizations.retentionDays} * interval '1 day')`,
+      ),
     )
     .limit(100);
   let deleted = 0;
   for (const item of expired) {
-    await removeImport(
-      { userId: item.userId, organizationId: item.organizationId },
-      item.id,
-      store,
-    );
-    deleted++;
+    try {
+      await removeImport(
+        { userId: item.userId, organizationId: item.organizationId },
+        item.id,
+        store,
+      );
+      deleted++;
+    } catch (error) {
+      if (!(error instanceof HttpError) || ![404, 409].includes(error.status))
+        throw error;
+    }
   }
   return deleted;
 }

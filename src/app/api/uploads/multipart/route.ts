@@ -3,6 +3,7 @@ import { requireIdentity } from "@/server/auth";
 import { authorize } from "@/server/auth/rbac";
 import { getFileStore } from "@/server/storage";
 import { checkOrigin, errorResponse, HttpError, readJson } from "@/server/http";
+import { limitOrganizationAction } from "@/server/limits";
 
 export const runtime = "nodejs";
 
@@ -31,11 +32,13 @@ export async function POST(request: Request) {
       !store.abortMultipartUpload
     )
       throw new HttpError(409, "Transfert multipart indisponible.");
-    if (body.action === "start")
+    if (body.action === "start") {
+      await limitOrganizationAction(actor.organizationId, "upload");
       return Response.json(
         await store.beginMultipartUpload(actor.organizationId, body.bytes),
         { status: 201 },
       );
+    }
     if (body.action === "part")
       return Response.json({
         url: await store.signMultipartPart(

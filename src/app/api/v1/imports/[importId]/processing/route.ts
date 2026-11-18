@@ -2,6 +2,7 @@ import { getImport } from "@/server/imports";
 import { queueImport, runJob } from "@/server/catalog";
 import { dispatchMode } from "@/server/integration/dispatch";
 import { json, problem, requireApiPrincipal } from "@/server/api/v1";
+import { limitOrganizationAction } from "@/server/limits";
 
 export const maxDuration = 300;
 
@@ -21,6 +22,7 @@ export async function POST(
       "processing:start",
     );
     const { importId } = await context.params;
+    await limitOrganizationAction(principal.organizationId, "processing");
     const result = await queueImport(principal, importId, {
       correlationId: principal.correlationId,
     });

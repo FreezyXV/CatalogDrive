@@ -51,20 +51,49 @@ export interface MessageBroker {
 }
 
 export class AmqpBroker implements MessageBroker {
+  private connected = true;
+
   private constructor(
     private connection: import("amqplib").ChannelModel,
     private publisher: import("amqplib").ConfirmChannel,
   ) {}
 
+  get healthy() {
+    return this.connected;
+  }
+
+  private watch(
+    channel: import("amqplib").Channel | import("amqplib").ChannelModel,
+  ) {
+    const unhealthy = () => {
+      this.connected = false;
+    };
+    channel.on("error", unhealthy);
+    channel.on("close", unhealthy);
+  }
+
   static async connect(url: string) {
     const amqp = await import("amqplib");
-    const connection = await amqp.connect(url, {
+    const endpoint = new URL(url);
+    if (!endpoint.searchParams.has("heartbeat"))
+      endpoint.searchParams.set("heartbeat", "15");
+    const connection = await amqp.connect(endpoint.toString(), {
       clientProperties: { connection_name: "catamotive" },
+      timeout: 10_000,
     });
-    const publisher = await connection.createConfirmChannel();
-    const broker = new AmqpBroker(connection, publisher);
-    await broker.assertTopology();
-    return broker;
+    // EventEmitter errors can arrive before the confirm channel is created.
+    connection.on("error", () => undefined);
+    try {
+      const publisher = await connection.createConfirmChannel();
+      const broker = new AmqpBroker(connection, publisher);
+      broker.watch(connection);
+      broker.watch(publisher);
+      await broker.assertTopology();
+      return broker;
+    } catch (error) {
+      await connection.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   /** Declarations are idempotent: every process can assert the same topology. */
@@ -113,11 +142,15 @@ export class AmqpBroker implements MessageBroker {
 
   async consume(queue: string, handler: Handler, prefetch = 1) {
     const channel = await this.connection.createChannel();
+    this.watch(channel);
     // One unacknowledged message per consumer: imports are long-running,
     // so fair dispatch matters more than throughput.
     await channel.prefetch(prefetch);
     await channel.consume(queue, async (message) => {
-      if (!message) return;
+      if (!message) {
+        this.connected = false;
+        return;
+      }
       const headers = message.properties.headers ?? {};
       const outcome = await handler({
         body: message.content,
@@ -129,8 +162,13 @@ export class AmqpBroker implements MessageBroker {
         deliveryCount: Number(headers["x-delivery-count"] ?? 0),
         headers,
       }).catch(() => "retry" as const);
-      if (outcome === "ack") channel.ack(message);
-      else channel.nack(message, false, outcome === "retry");
+      try {
+        if (outcome === "ack") channel.ack(message);
+        else channel.nack(message, false, outcome === "retry");
+      } catch {
+        // A closed channel requeues unacknowledged messages at the broker.
+        this.connected = false;
+      }
     });
   }
 

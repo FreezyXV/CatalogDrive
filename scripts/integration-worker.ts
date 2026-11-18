@@ -26,7 +26,6 @@ const { sqlClient } = await import("../src/server/db");
 
 const url = process.env.RABBITMQ_URL ?? "amqp://guest:guest@127.0.0.1:5672";
 const only = process.env.WORKER_QUEUES?.split(",").map((q) => q.trim());
-const broker = await AmqpBroker.connect(url);
 let stopping = false;
 const stop = () => {
   stopping = true;
@@ -40,42 +39,52 @@ const consumers = [
   [QUEUES.exportCms, handleExportGenerate],
   [QUEUES.exportFile, handleExportGenerate],
 ] as const;
-for (const [queue, handler] of consumers)
-  if (!only || only.includes(queue)) await broker.consume(queue, handler, 1);
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-if (!only || only.includes(QUEUES.notifications))
-  await broker.consume(QUEUES.notifications, async (delivery) => {
-    console.log(
-      JSON.stringify({
-        event: "notification",
-        type: delivery.type,
-        correlationId: delivery.correlationId,
-        body: JSON.parse(delivery.body.toString("utf8")),
-      }),
-    );
-    return "ack";
-  });
-
-console.log(
-  JSON.stringify({
-    event: "worker.ready",
-    broker: url.replace(/\/\/[^@]*@/, "//***@"),
-    queues: only ?? "all",
-  }),
-);
 while (!stopping) {
+  let broker: Awaited<ReturnType<typeof AmqpBroker.connect>> | undefined;
   try {
-    const sent = await relayOutbox(broker);
-    if (!sent) await new Promise((resolve) => setTimeout(resolve, 500));
+    broker = await AmqpBroker.connect(url);
+    for (const [queue, handler] of consumers)
+      if (!only || only.includes(queue))
+        await broker.consume(queue, handler, 1);
+    if (!only || only.includes(QUEUES.notifications))
+      await broker.consume(QUEUES.notifications, async (delivery) => {
+        console.log(
+          JSON.stringify({
+            event: "notification",
+            type: delivery.type,
+            correlationId: delivery.correlationId,
+          }),
+        );
+        return "ack";
+      });
+    console.log(
+      JSON.stringify({ event: "worker.ready", queues: only ?? "all" }),
+    );
+    while (!stopping && broker.healthy) {
+      try {
+        if (!(await relayOutbox(broker))) await sleep(500);
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            event: "outbox.relay.error",
+            error: error instanceof Error ? error.name : "UnknownError",
+          }),
+        );
+        await sleep(3000);
+      }
+    }
   } catch (error) {
     console.error(
       JSON.stringify({
-        event: "outbox.relay.error",
-        error: error instanceof Error ? error.message : "unknown",
+        event: "worker.broker.error",
+        error: error instanceof Error ? error.name : "UnknownError",
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+  } finally {
+    await broker?.close();
   }
+  if (!stopping) await sleep(3000);
 }
-await broker.close();
 await sqlClient.end();

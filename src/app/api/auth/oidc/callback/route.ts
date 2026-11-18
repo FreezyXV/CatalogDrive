@@ -17,8 +17,13 @@ const pending = z.object({
   nonce: z.string().min(16),
   verifier: z.string().min(43),
 });
-const same = (a: string, b: string) =>
-  a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+function same(a: string, b: string) {
+  const received = Buffer.from(a);
+  const expected = Buffer.from(b);
+  return (
+    received.length === expected.length && timingSafeEqual(received, expected)
+  );
+}
 
 /**
  * Redirect URI of the Authorization Code flow: checks `state`, exchanges the
@@ -31,10 +36,9 @@ export async function GET(request: Request) {
     const config = requireOidcConfig();
     const params = new URL(request.url).searchParams;
     const jar = await cookies();
-    const saved = pending.safeParse(
-      JSON.parse(jar.get(OIDC_COOKIE)?.value ?? "null"),
-    );
-    jar.delete({ name: OIDC_COOKIE, path: "/api/auth/oidc" });
+    const value = jar.get(OIDC_COOKIE)?.value;
+    jar.set(OIDC_COOKIE, "", { path: "/api/auth/oidc", maxAge: 0 });
+    const saved = pending.safeParse(JSON.parse(value ?? "null"));
     if (params.get("error"))
       throw new HttpError(
         401,

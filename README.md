@@ -261,7 +261,7 @@ sequenceDiagram
 ```
 
 - **Organisations et rôles** viennent du fournisseur d'identité : groupes `/organizations/<uuid>/<rôle>` dans le claim `groups`. À chaque connexion, l'application synchronise : changement de rôle appliqué et audité, organisation retirée passée en `revoked` avec ses sessions fermées.
-- **Un compte SSO** ne peut jamais se connecter par mot de passe ; un compte local n'est rattaché que si l'IdP certifie l'email.
+- L’inscription sociale exige un email vérifié. Si un compte existe déjà pour cette adresse, utilisez sa méthode de connexion habituelle. Les rôles fournis par le SSO sont révoqués à la prochaine authentification si le groupe a été retiré.
 - **Connexion sociale et inscription libre** : avec Auth0, les boutons « Continuer avec Google » (ou Microsoft, GitHub…) apparaissent sur les pages de connexion et d'inscription. Un utilisateur dont le jeton ne porte aucun groupe obtient à sa première connexion une organisation personnelle dont il est admin ; une machine n'en obtient jamais. Mise en place pas à pas : [docs/integration/AUTH0.md](docs/integration/AUTH0.md).
 
 ```mermaid
@@ -534,7 +534,7 @@ Variables Vercel (Production et Preview) :
 
 Secret GitHub Actions : `DATABASE_URL_UNPOOLED` = URL Neon **directe** (sans `-pooler`). Le workflow `Migrate database` applique les migrations à chaque push sur `main` qui touche `drizzle/` ou `src/server/db/`, puis vérifie le schéma avec `scripts/check-schema.ts`. Il se lance aussi à la main depuis l'onglet Actions. Le build Vercel n'exécute pas de migration.
 
-Après chaque déploiement de production réussi, le workflow `Smoke test production` ([`scripts/smoke-production.ts`](scripts/smoke-production.ts)) rejoue le parcours complet sur le site réel : page d'accueil, santé de l'API, inscription, dépôt par URL signée vers B2, diagnostic, mapping, normalisation, export, téléchargement puis suppression de l'import. Un compte jetable `smoke-…@example.test` est créé à chaque exécution.
+Après chaque déploiement de production réussi, le workflow `Smoke test production` ([`scripts/smoke-production.ts`](scripts/smoke-production.ts)) rejoue le parcours complet sur le site réel : page d'accueil, santé de l'API, inscription, dépôt par URL signée vers B2, diagnostic, mapping, normalisation, export, téléchargement puis suppression de l'import. Un compte jetable `smoke-…@example.test` est créé à chaque exécution. La CI contrôle aussi le parcours navigateur avec Chromium et les échanges sur RabbitMQ.
 
 La connexion PostgreSQL ([`src/server/db/connection.ts`](src/server/db/connection.ts)) s'adapte au fournisseur :
 

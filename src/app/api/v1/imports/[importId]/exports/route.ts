@@ -1,4 +1,5 @@
 import { readJson } from "@/server/http";
+import { limitOrganizationAction } from "@/server/limits";
 import {
   exportRequestInput,
   requestExport,
@@ -25,6 +26,7 @@ export async function POST(
     );
     const { importId } = await context.params;
     const input = exportRequestInput.parse(await readJson(request, 16 * 1024));
+    await limitOrganizationAction(principal.organizationId, "export");
     const created = await requestExport(
       principal,
       importId,

@@ -1,5 +1,6 @@
 import { requireIdentity } from "@/server/auth";
 import { authorize } from "@/server/auth/rbac";
+import { limitOrganizationAction } from "@/server/limits";
 import {
   importCsv,
   importSignedUpload,
@@ -15,6 +16,7 @@ export async function POST(request: Request) {
     checkOrigin(request);
     const identity = await requireIdentity();
     authorize(identity, "import:create");
+    await limitOrganizationAction(identity.organizationId, "import");
     if (request.headers.get("content-type")?.includes("application/json")) {
       const body = (await readJson(request)) as {
         key?: string;

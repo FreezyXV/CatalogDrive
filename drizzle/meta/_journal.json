@@ -43,6 +43,13 @@
       "when": 1794519758470,
       "tag": "0005_oidc_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795040161911,
+      "tag": "0006_track_oidc_memberships",
+      "breakpoints": true
     }
   ]
 }

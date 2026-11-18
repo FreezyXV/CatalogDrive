@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { and, eq, gt, ne, sql } from "drizzle-orm";
+import { and, eq, gt, ne } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   users,
@@ -10,10 +10,10 @@ import {
   memberships,
   sessions,
   auditEvents,
-  authAttempts,
 } from "@/server/db/schema";
 import { hashPassword, hashToken, verifyPassword } from "./password";
 import { HttpError } from "@/server/http";
+import { limitAttempts } from "../limits";
 import { normalizeRole, type Role } from "./rbac";
 import { discover, oidcConfig } from "./oidc";
 export const SESSION_COOKIE = "catamotive_session";
@@ -68,29 +68,6 @@ export async function requirePageIdentity() {
   const identity = await currentIdentity();
   if (!identity) redirect("/connexion");
   return identity;
-}
-async function limitAttempts(
-  key: string,
-  maximum: number,
-  minutes: number,
-  message: string,
-) {
-  const [attempt] = await db
-    .insert(authAttempts)
-    .values({
-      key,
-      count: 1,
-      resetAt: new Date(Date.now() + minutes * 60_000),
-    })
-    .onConflictDoUpdate({
-      target: authAttempts.key,
-      set: {
-        count: sql`CASE WHEN ${authAttempts.resetAt} < now() THEN 1 ELSE ${authAttempts.count} + 1 END`,
-        resetAt: sql`CASE WHEN ${authAttempts.resetAt} < now() THEN now() + (${minutes} * interval '1 minute') ELSE ${authAttempts.resetAt} END`,
-      },
-    })
-    .returning();
-  if (attempt.count > maximum) throw new HttpError(429, message);
 }
 export async function limitAuth(email: string) {
   await limitAttempts(

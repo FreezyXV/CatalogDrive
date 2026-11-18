@@ -80,7 +80,11 @@ step(
 const csv = Buffer.from(
   "SKU;Désignation;Marque;Prix\nSMK1;Disque de frein;Bosch;48,00\nSMK2;Plaquettes;Valeo;24,90\n",
 );
-const init = await call("/api/uploads", { method: "POST" });
+const init = await call("/api/uploads", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ bytes: csv.length }),
+});
 let importId: string;
 if (init.status === 201) {
   const upload = await json(init);
