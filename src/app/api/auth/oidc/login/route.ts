@@ -16,7 +16,10 @@ export async function GET(request: Request) {
     const config = requireOidcConfig();
     const incoming = new URL(request.url);
     const canonical = new URL("/api/auth/oidc/login", config.redirectUri);
-    if (incoming.origin !== canonical.origin) {
+    // Next may use its listening hostname in request.url; the Host header
+    // identifies the browser origin on which the PKCE cookie will be stored.
+    const host = request.headers.get("host") ?? incoming.host;
+    if (host.toLowerCase() !== canonical.host.toLowerCase()) {
       canonical.search = incoming.search;
       return Response.redirect(canonical, 307);
     }
