@@ -11,7 +11,7 @@ import {
   users,
 } from "../../src/server/db/schema";
 import { provisionPrincipal } from "../../src/server/auth/oidc";
-import { authenticate } from "../../src/server/auth";
+import { authenticate, registerAccount } from "../../src/server/auth";
 import { hashToken } from "../../src/server/auth/password";
 
 const orgA = randomUUID();
@@ -123,9 +123,14 @@ describe("provisionnement juste-à-temps depuis le fournisseur d’identité", (
     await expect(provisionPrincipal(claims)).rejects.toMatchObject({
       status: 403,
     });
-    const first = await provisionPrincipal(claims, { selfSignup: true });
+    const [first, concurrent] = await Promise.all([
+      provisionPrincipal(claims, { selfSignup: true }),
+      provisionPrincipal(claims, { selfSignup: true }),
+    ]);
     const [[orgId, role]] = [...first.granted];
     expect(role).toBe("admin");
+    expect(concurrent.user.id).toBe(first.user.id);
+    expect([...concurrent.granted.keys()]).toEqual([orgId]);
     const [org] = await db
       .select()
       .from(organizations)
@@ -146,25 +151,32 @@ describe("provisionnement juste-à-temps depuis le fournisseur d’identité", (
     await db.delete(organizations).where(eq(organizations.id, orgId));
   });
 
-  it("connexion sociale d’un membre existant : ses organisations sont gardées, rien n’est révoqué", async () => {
+  it("révoque aussi le dernier groupe et ferme sa session", async () => {
     const [user] = await db
       .select()
       .from(users)
       .where(eq(users.oidcSubject, sub));
-    const before = await db
-      .select({ org: memberships.organizationId, role: memberships.role })
+    await db.insert(sessions).values({
+      tokenHash: hashToken(randomUUID()),
+      userId: user.id,
+      organizationId: orgA,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    await expect(
+      provisionPrincipal(
+        { sub, email, email_verified: true },
+        { selfSignup: true },
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(
+      await db.select().from(sessions).where(eq(sessions.userId, user.id)),
+    ).toHaveLength(0);
+    const grants = await db
+      .select()
       .from(memberships)
       .where(eq(memberships.userId, user.id));
-    const { granted } = await provisionPrincipal(
-      { sub, email, email_verified: true },
-      { selfSignup: true },
-    );
-    expect(Object.fromEntries(granted)).toEqual({ [orgA]: "admin" });
-    const after = await db
-      .select({ org: memberships.organizationId, role: memberships.role })
-      .from(memberships)
-      .where(eq(memberships.userId, user.id));
-    expect(after).toEqual(before);
+    expect(grants).toHaveLength(2);
+    expect(grants.every(({ role }) => role === "revoked")).toBe(true);
   });
 
   it("lit les groupes dans un claim personnalisé (Action Auth0)", async () => {
@@ -189,5 +201,37 @@ describe("provisionnement juste-à-temps depuis le fournisseur d’identité", (
     });
     // Same subject → same user; the unverified email is never used to match.
     expect(user.email).toBe(email);
+  });
+
+  it("refuse l’inscription sociale sans email vérifié ou avec un email déjà attribué", async () => {
+    const localEmail = `local-${randomUUID()}@example.test`;
+    const password = "mot-de-passe-local-de-test";
+    const actor = await registerAccount(localEmail, password, "Compte local");
+    const subject = randomUUID();
+    try {
+      await expect(
+        provisionPrincipal(
+          { sub: subject, email: localEmail },
+          { selfSignup: true },
+        ),
+      ).rejects.toMatchObject({ status: 403 });
+      await expect(
+        provisionPrincipal(
+          { sub: subject, email: localEmail, email_verified: true },
+          { selfSignup: true },
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(await authenticate(localEmail, password)).toEqual(actor);
+      expect(
+        await db.select().from(users).where(eq(users.oidcSubject, subject)),
+      ).toHaveLength(0);
+    } finally {
+      await db.delete(auditEvents).where(eq(auditEvents.userId, actor.userId));
+      await db.delete(memberships).where(eq(memberships.userId, actor.userId));
+      await db.delete(users).where(eq(users.id, actor.userId));
+      await db
+        .delete(organizations)
+        .where(eq(organizations.id, actor.organizationId));
+    }
   });
 });

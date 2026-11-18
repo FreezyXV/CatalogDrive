@@ -1,4 +1,12 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -33,6 +41,7 @@ import {
 } from "../../src/server/integration/export-requests";
 import { QUEUES } from "../../src/server/integration/topology";
 import { rejectedLinesEvent } from "../../src/server/integration/messages";
+import * as importOutcome from "../../src/server/integration/import-outcome";
 
 if (!process.env.DATABASE_URL?.endsWith("/catamotive_test"))
   throw new Error("Base dédiée catamotive_test requise (.env.test).");
@@ -196,6 +205,35 @@ describe("pipeline asynchrone : outbox → RabbitMQ (sémantique) → workers", 
     expect(job.status).toBe("ready");
     expect(job.attempts).toBe(1);
     expect(broker.queues.get(QUEUES.deadLetter)).toHaveLength(0);
+  });
+
+  it("rejoue le traitement si l’écriture de son résultat dans l’outbox échoue", async () => {
+    const broker = new InMemoryBroker();
+    await wire(broker);
+    const id = await mappedImport();
+    await queueImport(actor, id, { correlationId: "retry-outcome" });
+    const enqueueOutcome = importOutcome.enqueueImportOutcome;
+    const enqueue = vi
+      .spyOn(importOutcome, "enqueueImportOutcome")
+      .mockImplementationOnce(async (tx, job, counts, correlationId) => {
+        await enqueueOutcome(tx, job, counts, correlationId);
+        throw new Error("Arrêt avant validation de la transaction");
+      });
+    try {
+      await pump(broker);
+      expect((await getImport(actor, id)).job).toMatchObject({
+        status: "ready",
+        attempts: 2,
+      });
+      const notifications = broker.queues.get(QUEUES.notifications)!;
+      expect(
+        notifications.filter(
+          (message) => message.type === "import.processing.completed",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      enqueue.mockRestore();
+    }
   });
 
   it("route un message hors contrat directement en DLQ", async () => {

@@ -178,7 +178,7 @@ Les organisations et les rôles viennent du fournisseur d'identité, sous la for
 
 - une organisation qui disparaît du jeton passe en `revoked` et ses sessions sont fermées (processus de départ) ;
 - un changement de rôle est appliqué et audité (`membership.role_synced`) ;
-- un compte local existant n'est rattaché que si le fournisseur certifie l'email (`email_verified`) ;
+- l’inscription sociale exige un email vérifié (`email_verified`). Une adresse déjà utilisée conserve sa méthode de connexion actuelle ;
 - un compte SSO ne peut jamais se connecter par mot de passe (son empreinte n'est pas un hash scrypt).
 
 ## Flux 3 — appel partenaire via la passerelle

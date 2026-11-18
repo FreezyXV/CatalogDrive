@@ -1,6 +1,10 @@
 # CataMotive — état de préparation commerciale
 
-État au 28 septembre 2026 : **pilote public gratuit utilisable, vente en libre-service non prête**. La production prend en charge sept formats et 500 000 lignes avec PostgreSQL et Supabase Storage jusqu'à 50 Mo. Une Preview isolée côté base a passé diagnostic, traitement et export d’un CSV de 199 Mo avec Backblaze B2 en 530 s, reprises réseau comprises. Ce test unique ne garantit pas tous les catalogues de cette taille et B2 n’est pas activé en production. Les résultats sont détaillés dans [VERIFICATION.md](VERIFICATION.md). La page Tarifs affiche des hypothèses ; aucun abonnement n'est activé ni facturé.
+État au 18 novembre 2026. Le pilote public utilise Vercel, PostgreSQL sur Neon et le stockage Backblaze B2. L’interface accepte sept formats et jusqu’à 500 000 lignes, sous les [bornes par format](FORMATS.md). La connexion Auth0 avec Google est configurée. Le service traite encore les imports dans les requêtes web en production. RabbitMQ, le worker et WSO2 restent des options d’intégration à valider sur l’hébergement cible. Aucun abonnement ne peut être acheté sur la page Tarifs.
+
+L’interface et l’API partenaire partagent les limites horaires par organisation. Elles autorisent 30 démarrages de dépôt signé, 30 demandes d’import, 60 demandes de mapping ou de diagnostic, 30 lancements de traitement et 60 demandes d’export. Chaque URL d’envoi est signée pour sa taille exacte. Les limites horaires protègent la capacité de traitement. Les quotas de stockage cumulé et les limites par offre restent à établir.
+
+L’API partenaire reçoit les imports en corps de requête. Sur Vercel, ce canal est limité à 4,5 Mo par la plateforme. L’interface web envoie les fichiers directement au stockage et suit la limite affichée dans l’espace d’import. [Limites des fonctions Vercel](https://vercel.com/docs/functions/limitations).
 
 ## Bloquants avant la vente
 
@@ -47,4 +51,4 @@ Jalons nécessaires, chacun avec un test de bout en bout :
 3. **Formats à grande échelle** : CSV en flux, XLSX en lecture bornée ou déportée et ZIP avec bornes sur nombre d'entrées, taille de chaque entrée et expansion totale. Vérifier des CSV, XLSX et ZIP réels de 251 Mio puis jusqu'à 1 Gio, plus les archives corrompues et bombes de décompression.
 4. **Capacité métier** : quotas d'espace et de lignes, traitement des doublons sans index complet en mémoire, pagination et export en flux, surveillance du temps et des volumes PostgreSQL. Vérifier mapping, rapport qualité et export d'un grand catalogue représentatif, pas seulement son dépôt.
 
-La taille réelle de dépôt en production reste de 50 Mo. La nouvelle limite de lecture est de 500 000 lignes, avec les bornes de format détaillées dans [FORMATS.md](FORMATS.md). La Preview affiche 200 Mo pour les dépôts, avec les restrictions XLSX/ZIP indiquées dans l'interface ; un CSV à 199 Mo y a passé le parcours complet, mais il faut encore éprouver des catalogues représentatifs, les quotas et l’exploitation avant une promesse commerciale de traitement à 200 Mo.
+La configuration du déploiement détermine la taille maximale de dépôt. La nouvelle limite de lecture est de 500 000 lignes, avec les bornes de format détaillées dans [FORMATS.md](FORMATS.md). La Preview affiche 200 Mo pour les dépôts, avec les restrictions XLSX/ZIP indiquées dans l'interface ; un CSV à 199 Mo y a passé le parcours complet, mais il faut encore éprouver des catalogues représentatifs, les quotas et l’exploitation avant une promesse commerciale de traitement à 200 Mo.

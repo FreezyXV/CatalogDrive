@@ -1,10 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "../db";
+import { db, lockTransaction } from "../db";
 import { auditEvents, exportRequests, importJobs } from "../db/schema";
 import { createExport } from "../exports";
 import { getImport } from "../imports";
-import { lockImport, type Actor } from "../catalog";
+import type { Actor } from "../catalog";
 import { HttpError } from "../http";
 import {
   defaultExportConfig,
@@ -14,6 +14,7 @@ import {
 } from "@/domain/exports";
 import { dispatchMode } from "./dispatch";
 import { enqueue } from "./outbox";
+import { activeExportAttempt } from "./export-state";
 
 /** Public input: only the profile is required, the rest defaults per profile. */
 export const exportRequestInput = z.object({
@@ -62,8 +63,9 @@ export async function requestExport(
 ) {
   await getImport(actor, importId);
   const config = buildExportConfig(input);
+  const queued = dispatchMode() === "queue";
   const request = await db.transaction(async (tx) => {
-    await lockImport(tx, importId);
+    await lockTransaction(tx, importId);
     const [job] = await tx
       .select({ status: importJobs.status })
       .from(importJobs)
@@ -73,7 +75,7 @@ export async function requestExport(
           eq(importJobs.organizationId, actor.organizationId),
         ),
       );
-    if (job.status !== "ready")
+    if (job?.status !== "ready")
       throw new HttpError(
         409,
         "Attendez la fin du traitement avant d’exporter.",
@@ -86,6 +88,7 @@ export async function requestExport(
         requestedBy: actor.userId,
         profile: config.profile,
         config,
+        ...(queued ? {} : { status: "processing", attempts: 1 }),
       })
       .returning();
     await tx.insert(auditEvents).values({
@@ -93,7 +96,7 @@ export async function requestExport(
       action: "export.requested",
       entityId: created.id,
     });
-    if (dispatchMode() === "queue") {
+    if (queued) {
       const { route } = await enqueue(
         tx,
         {
@@ -115,21 +118,12 @@ export async function requestExport(
     }
     return created;
   });
-  if (dispatchMode() === "queue") return request;
+  if (queued) return request;
   try {
-    const exported = await createExport(actor, importId, config);
-    const [ready] = await db
-      .update(exportRequests)
-      .set({
-        status: "ready",
-        exportId: exported.id,
-        rowCount: exported.rowCount,
-        rejectedCount: exported.rejectedCount,
-        updatedAt: new Date(),
-      })
-      .where(eq(exportRequests.id, request.id))
-      .returning();
-    return ready;
+    await createExport(actor, importId, config, undefined, {
+      attempt: request,
+    });
+    return await getExportRequest(actor, request.id);
   } catch (error) {
     await db
       .update(exportRequests)
@@ -139,7 +133,7 @@ export async function requestExport(
           error instanceof HttpError ? error.message : "Export impossible.",
         updatedAt: new Date(),
       })
-      .where(eq(exportRequests.id, request.id));
+      .where(activeExportAttempt(request));
     throw error;
   }
 }

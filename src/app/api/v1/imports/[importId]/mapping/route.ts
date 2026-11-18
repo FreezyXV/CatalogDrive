@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { readJson } from "@/server/http";
+import { limitOrganizationAction } from "@/server/limits";
 import { getImport } from "@/server/imports";
 import { saveMapping } from "@/server/catalog";
 import {
@@ -35,6 +36,7 @@ export async function PUT(
     );
     const { importId } = await context.params;
     const input = body.parse(await readJson(request, 128 * 1024));
+    await limitOrganizationAction(principal.organizationId, "mapping");
     await saveMapping(
       principal,
       importId,

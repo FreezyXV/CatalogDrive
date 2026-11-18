@@ -8,6 +8,7 @@ import {
   ApiError,
 } from "@/server/api/v1";
 import { uploadLimitBytes, uploadLimitLabel } from "@/domain/upload-limit";
+import { limitOrganizationAction } from "@/server/limits";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
         `Le fichier dépasse la limite de ${uploadLimitLabel()}.`,
       );
     if (!request.body) throw new ApiError(400, "Corps de requête vide.");
+    await limitOrganizationAction(principal.organizationId, "import");
     const id = await importCsv(principal, name, request.body);
     return json(importResource(await getImport(principal, id)), principal, {
       status: 201,

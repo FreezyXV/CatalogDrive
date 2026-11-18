@@ -1,12 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq, ne, notInArray } from "drizzle-orm";
+import { and, eq, inArray, ne, notInArray } from "drizzle-orm";
 import {
   createRemoteJWKSet,
   jwtVerify,
   type JWTPayload,
   type JWTVerifyGetKey,
 } from "jose";
-import { db } from "../db";
+import { db, lockTransaction } from "../db";
 import {
   auditEvents,
   memberships,
@@ -148,6 +148,7 @@ export async function verifyJwt(
     audience,
     algorithms: ["RS256", "PS256", "ES256"],
     clockTolerance: 30,
+    requiredClaims: ["sub", "exp"],
   });
   return payload as TokenClaims;
 }
@@ -173,7 +174,11 @@ export function membershipsFromGroups(groups: unknown) {
 }
 
 export function scopesOf(claims: TokenClaims) {
-  return new Set((claims.scope ?? "").split(" ").filter(Boolean));
+  return new Set(
+    typeof claims.scope === "string"
+      ? claims.scope.split(/\s+/).filter(Boolean)
+      : [],
+  );
 }
 
 /**
@@ -206,65 +211,91 @@ export async function provisionPrincipal(
   claims: TokenClaims,
   options: ProvisionOptions = {},
 ) {
-  if (!claims.sub) throw new HttpError(401, "Jeton sans sujet.");
+  const subject = claims.sub;
+  if (typeof subject !== "string" || !subject || subject.length > 255)
+    throw new HttpError(401, "Sujet du jeton invalide.");
   const granted = membershipsFromGroups(
     (claims as Record<string, unknown>)[options.groupsClaim ?? "groups"],
   );
-  // The IdP manages memberships only when it sends groups; otherwise the
-  // local memberships (self-signup) are kept and nothing is revoked.
-  const managed = granted.size > 0;
-  if (!managed && !options.selfSignup)
-    throw new HttpError(
-      403,
-      "Votre compte n’est rattaché à aucune organisation CataMotive.",
-    );
-  const email = (
-    claims.email && claims.email_verified !== false
-      ? claims.email
-      : `${claims.azp ?? "client"}.${claims.sub}@clients.catamotive.invalid`
-  ).toLowerCase();
-  return db.transaction(async (tx) => {
+  const verifiedEmail =
+    claims.email_verified === true && typeof claims.email === "string"
+      ? claims.email.trim().toLowerCase()
+      : "";
+  const hasGroups = granted.size > 0;
+  const result = await db.transaction(async (tx) => {
+    // Two concurrent callbacks for one subject must create one account and space.
+    await lockTransaction(tx, "oidc:" + subject);
     let [user] = await tx
       .select()
       .from(users)
-      .where(eq(users.oidcSubject, claims.sub!))
+      .where(eq(users.oidcSubject, subject))
       .limit(1);
     if (!user) {
-      // Link an existing local account only when the IdP vouches for the email.
-      const [byEmail] = claims.email_verified
-        ? await tx.select().from(users).where(eq(users.email, email)).limit(1)
-        : [];
-      if (byEmail && !byEmail.oidcSubject) {
-        [user] = await tx
-          .update(users)
-          .set({ oidcSubject: claims.sub })
-          .where(eq(users.id, byEmail.id))
-          .returning();
-      } else {
-        [user] = await tx
-          .insert(users)
-          .values({
-            email,
-            oidcSubject: claims.sub,
-            // Not a scrypt hash: password login is impossible for this account.
-            passwordHash: `oidc:${claims.sub}`,
-            emailVerifiedAt: claims.email_verified ? new Date() : null,
-          })
-          .returning();
-      }
+      if (!hasGroups && !options.selfSignup) return null;
+      if (!hasGroups && !verifiedEmail)
+        throw new HttpError(
+          403,
+          "Vérifiez votre adresse email auprès de votre fournisseur de connexion.",
+        );
+      [user] = await tx
+        .insert(users)
+        .values({
+          email:
+            verifiedEmail ||
+            `client.${createHash("sha256").update(subject).digest("hex")}@clients.catamotive.invalid`,
+          oidcSubject: subject,
+          passwordHash: `oidc:${subject}`,
+          emailVerifiedAt: verifiedEmail ? new Date() : null,
+        })
+        .onConflictDoNothing({ target: users.email })
+        .returning();
+      if (!user)
+        throw new HttpError(
+          409,
+          "Un compte utilise déjà cette adresse. Connectez-vous avec votre méthode habituelle.",
+        );
     }
-    if (!managed) {
+    // Revoke only grants supplied by the IdP, including loss of the last group.
+    const revoked = await tx
+      .update(memberships)
+      .set({ role: "revoked" })
+      .where(
+        and(
+          eq(memberships.userId, user.id),
+          eq(memberships.managedByOidc, true),
+          ne(memberships.role, "revoked"),
+          granted.size
+            ? notInArray(memberships.organizationId, [...granted.keys()])
+            : undefined,
+        ),
+      )
+      .returning({ organizationId: memberships.organizationId });
+    if (revoked.length)
+      await tx.delete(sessions).where(
+        and(
+          eq(sessions.userId, user.id),
+          inArray(
+            sessions.organizationId,
+            revoked.map(({ organizationId }) => organizationId),
+          ),
+        ),
+      );
+    if (!hasGroups) {
+      if (!options.selfSignup) return null;
       const own = await tx
         .select({
           organizationId: memberships.organizationId,
           role: memberships.role,
+          managedByOidc: memberships.managedByOidc,
         })
         .from(memberships)
-        .where(
-          and(eq(memberships.userId, user.id), ne(memberships.role, "revoked")),
-        );
-      for (const m of own) granted.set(m.organizationId, normalizeRole(m.role));
+        .where(eq(memberships.userId, user.id));
+      for (const m of own) {
+        if (!m.managedByOidc && m.role !== "revoked")
+          granted.set(m.organizationId, normalizeRole(m.role));
+      }
       if (!granted.size) {
+        if (own.length) return null;
         const [organization] = await tx
           .insert(organizations)
           .values({ name: organizationNameFor(claims) })
@@ -293,7 +324,10 @@ export async function provisionPrincipal(
         })
         .onConflictDoNothing();
       const [previous] = await tx
-        .select({ role: memberships.role })
+        .select({
+          role: memberships.role,
+          managedByOidc: memberships.managedByOidc,
+        })
         .from(memberships)
         .where(
           and(
@@ -301,13 +335,13 @@ export async function provisionPrincipal(
             eq(memberships.organizationId, organizationId),
           ),
         );
-      if (previous?.role === role) continue;
+      if (previous?.role === role && previous.managedByOidc) continue;
       await tx
         .insert(memberships)
-        .values({ userId: user.id, organizationId, role })
+        .values({ userId: user.id, organizationId, role, managedByOidc: true })
         .onConflictDoUpdate({
           target: [memberships.userId, memberships.organizationId],
-          set: { role },
+          set: { role, managedByOidc: true },
         });
       await tx.insert(auditEvents).values({
         userId: user.id,
@@ -316,29 +350,14 @@ export async function provisionPrincipal(
         entityId: user.id,
       });
     }
-    // Revoke organizations the IdP no longer grants.
-    const revoked = await tx
-      .update(memberships)
-      .set({ role: "revoked" })
-      .where(
-        and(
-          eq(memberships.userId, user.id),
-          ne(memberships.role, "revoked"),
-          notInArray(memberships.organizationId, [...granted.keys()]),
-        ),
-      )
-      .returning({ organizationId: memberships.organizationId });
-    for (const { organizationId } of revoked)
-      await tx
-        .delete(sessions)
-        .where(
-          and(
-            eq(sessions.userId, user.id),
-            eq(sessions.organizationId, organizationId),
-          ),
-        );
     return { user, granted };
   });
+  if (!result)
+    throw new HttpError(
+      403,
+      "Votre compte n’est rattaché à aucune organisation CataMotive.",
+    );
+  return result;
 }
 
 /** PKCE (RFC 7636) and anti-CSRF values for one login attempt. */

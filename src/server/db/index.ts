@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "./schema";
 import { isTransactionPooler, normalizeDatabaseUrl } from "./connection";
@@ -27,3 +28,11 @@ export const sqlClient =
   });
 if (process.env.NODE_ENV !== "production") globalDb.catamotiveSql = sqlClient;
 export const db = drizzle(sqlClient, { schema });
+
+export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+export async function lockTransaction(tx: Transaction, key: string) {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`,
+  );
+}

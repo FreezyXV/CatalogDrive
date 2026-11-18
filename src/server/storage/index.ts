@@ -60,7 +60,10 @@ export interface FileStore {
   read(key: string): Readable;
   remove(key: string): Promise<void>;
   signedUrl?(key: string, filename: string): Promise<string>;
-  signedUpload?(organizationId: string): Promise<{ key: string; url: string }>;
+  signedUpload?(
+    organizationId: string,
+    bytes: number,
+  ): Promise<{ key: string; url: string }>;
   beginMultipartUpload?(
     organizationId: string,
     bytes: number,
@@ -267,6 +270,10 @@ export class S3FileStore implements FileStore {
         ...resolveS3Location(session.key, this.bucket, this.uploadBucket),
         UploadId: session.uploadId,
         PartNumber: partNumber,
+        ContentLength: Math.min(
+          MULTIPART_PART_BYTES,
+          session.bytes - (partNumber - 1) * MULTIPART_PART_BYTES,
+        ),
       }),
       { expiresIn: 600 },
     );
@@ -487,7 +494,15 @@ export class S3FileStore implements FileStore {
     );
   }
 
-  async signedUpload(organizationId: string) {
+  async signedUpload(organizationId: string, bytes: number) {
+    if (
+      !Number.isSafeInteger(bytes) ||
+      bytes < 1 ||
+      bytes > MULTIPART_PART_BYTES
+    )
+      throw new ImportError(
+        "Utilisez le transfert par parties au-delà de 5 Mio.",
+      );
     const objectKey = `${organizationId}/${randomUUID()}`;
     return {
       key: this.uploadBucket ? `incoming/${objectKey}` : objectKey,
@@ -497,6 +512,7 @@ export class S3FileStore implements FileStore {
           Bucket: this.uploadBucket ?? this.bucket,
           Key: objectKey,
           ContentType: "application/octet-stream",
+          ContentLength: bytes,
         }),
         { expiresIn: 300 },
       ),

@@ -9,6 +9,7 @@ import {
   jsonb,
   integer,
   index,
+  boolean,
 } from "drizzle-orm/pg-core";
 import type { Diagnostic } from "../../domain/csv";
 import type {
@@ -50,6 +51,7 @@ export const memberships = pgTable(
       .notNull()
       .references(() => organizations.id),
     role: text().notNull().default("owner"),
+    managedByOidc: boolean("managed_by_oidc").notNull().default(false),
   },
   (t) => [primaryKey({ columns: [t.userId, t.organizationId] })],
 );

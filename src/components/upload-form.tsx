@@ -159,7 +159,11 @@ export function UploadForm({
           body: JSON.stringify({ key: multipartKey, filename: file.name }),
         });
       } else {
-        const initialization = await fetch("/api/uploads", { method: "POST" });
+        const initialization = await fetch("/api/uploads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bytes: file.size }),
+        });
         if (initialization.ok) {
           const upload = await initialization.json();
           const transferred = await fetch(upload.url, {

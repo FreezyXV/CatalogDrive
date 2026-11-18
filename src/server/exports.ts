@@ -2,18 +2,19 @@ import { and, eq, sql, asc, desc } from "drizzle-orm";
 import { Readable, Transform } from "node:stream";
 import { stringify } from "csv-stringify";
 import iconv from "iconv-lite";
-import { db } from "./db";
+import { db, lockTransaction, type Transaction } from "./db";
 import {
   importJobs,
   processedRows,
   exportJobs,
+  exportRequests,
   exportTemplates,
   auditEvents,
   usageRecords,
 } from "./db/schema";
 import { getFileStore } from "./storage";
 import { getImport } from "./imports";
-import { lockImport, type Actor, type Transaction } from "./catalog";
+import type { Actor } from "./catalog";
 import {
   cmsErrors,
   exportRecord,
@@ -23,6 +24,11 @@ import {
   type ExportConfig,
 } from "@/domain/exports";
 import { HttpError } from "./http";
+import {
+  activeExportAttempt,
+  type ExportAttempt,
+} from "./integration/export-state";
+import { enqueue } from "./integration/outbox";
 
 function csvStream(
   records: AsyncIterable<Record<string, string>>,
@@ -87,6 +93,7 @@ export async function createExport(
   id: string,
   config: ExportConfig,
   templateName?: string,
+  request?: { attempt: ExportAttempt; notify?: { correlationId?: string } },
 ) {
   await getImport(actor, id);
   try {
@@ -98,7 +105,7 @@ export async function createExport(
   const keys: string[] = [];
   try {
     return await db.transaction(async (tx) => {
-      await lockImport(tx, id);
+      await lockTransaction(tx, id);
       const [job] = await tx
         .select()
         .from(importJobs)
@@ -108,11 +115,28 @@ export async function createExport(
             eq(importJobs.organizationId, actor.organizationId),
           ),
         );
-      if (job.status !== "ready")
+      if (job?.status !== "ready")
         throw new HttpError(
           409,
           "Attendez la fin du traitement avant d’exporter.",
         );
+      if (request) {
+        const attempt = request.attempt;
+        const [active] = await tx
+          .select({ id: exportRequests.id })
+          .from(exportRequests)
+          .where(activeExportAttempt(attempt))
+          .for("update");
+        if (
+          !active ||
+          attempt.organizationId !== actor.organizationId ||
+          attempt.importId !== id
+        )
+          throw new HttpError(
+            409,
+            "Cette tentative d’export est terminée ou a été reprise.",
+          );
+      }
       let accepted = 0,
         rejected = 0;
       const seenSkus = new Set<string>();
@@ -286,6 +310,32 @@ export async function createExport(
       await tx
         .insert(auditEvents)
         .values({ ...actor, action: "export.created", entityId: exported.id });
+      if (request) {
+        await tx
+          .update(exportRequests)
+          .set({
+            status: "ready",
+            exportId: exported.id,
+            rowCount: exported.rowCount,
+            rejectedCount: exported.rejectedCount,
+            error: null,
+            updatedAt: new Date(),
+          })
+          .where(activeExportAttempt(request.attempt));
+        if (request.notify)
+          await enqueue(
+            tx,
+            {
+              type: "export.completed",
+              organizationId: actor.organizationId,
+              requestId: request.attempt.id,
+              importId: id,
+              exportId: exported.id,
+              error: null,
+            },
+            request.notify.correlationId,
+          );
+      }
       return exported;
     });
   } catch (error) {

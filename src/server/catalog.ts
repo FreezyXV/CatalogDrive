@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql, desc, asc } from "drizzle-orm";
-import { db } from "./db";
+import { db, lockTransaction, type Transaction } from "./db";
 import {
   importJobs,
   processedRows,
@@ -28,14 +28,9 @@ import {
 import { normalizeRow, similarity, statusFor } from "@/domain/normalization";
 import { enqueue } from "./integration/outbox";
 import { dispatchMode } from "./integration/dispatch";
+import { enqueueImportOutcome } from "./integration/import-outcome";
 
 export type Actor = Pick<Identity, "userId" | "organizationId">;
-export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
-export const lockImport = async (tx: Transaction, id: string) => {
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtextextended(${id}, 0))`,
-  );
-};
 export async function saveMapping(
   actor: Actor,
   id: string,
@@ -71,7 +66,7 @@ export async function saveMapping(
     throw new HttpError(422, (error as Error).message);
   }
   await db.transaction(async (tx) => {
-    await lockImport(tx, id);
+    await lockTransaction(tx, id);
     const [updated] = await tx
       .update(importJobs)
       .set({
@@ -133,7 +128,7 @@ export async function queueImport(
 ): Promise<QueueResult> {
   await getImport(actor, id);
   return db.transaction(async (tx) => {
-    await lockImport(tx, id);
+    await lockTransaction(tx, id);
     const [job] = await tx
       .select()
       .from(importJobs)
@@ -143,6 +138,9 @@ export async function queueImport(
           eq(importJobs.organizationId, actor.organizationId),
         ),
       );
+    if (!job) throw new HttpError(404, "Import introuvable.");
+    if (job.status === "deleting")
+      throw new HttpError(409, "Cet import est en cours de suppression.");
     if (["queued", "processing", "ready"].includes(job.status))
       return { queued: false, messageId: null, route: null };
     if (!job.mapping || !job.rules)
@@ -301,19 +299,36 @@ export async function duplicatePass(
   }
   return counts;
 }
-export async function processJob(job: typeof importJobs.$inferSelect) {
+export async function processJob(
+  job: typeof importJobs.$inferSelect,
+  outcome?: { correlationId?: string },
+) {
   const actor = { userId: job.createdBy, organizationId: job.organizationId };
   const { file } = await getImport(actor, job.id);
   if (!job.mapping || !job.rules || !job.runId)
     throw new Error("Configuration de traitement absente");
-  await db
-    .delete(processedRows)
-    .where(
-      and(
-        eq(processedRows.importId, job.id),
-        eq(processedRows.organizationId, job.organizationId),
-      ),
-    );
+  const runId = job.runId;
+  const ownedRun = and(
+    eq(importJobs.id, job.id),
+    eq(importJobs.runId, runId),
+    eq(importJobs.status, "processing"),
+  );
+  await db.transaction(async (tx) => {
+    const [current] = await tx
+      .select({ id: importJobs.id })
+      .from(importJobs)
+      .where(ownedRun)
+      .for("update");
+    if (!current) throw new Error("Le job n’est plus détenu par ce worker");
+    await tx
+      .delete(processedRows)
+      .where(
+        and(
+          eq(processedRows.importId, job.id),
+          eq(processedRows.organizationId, job.organizationId),
+        ),
+      );
+  });
   let batch: (typeof processedRows.$inferInsert)[] = [];
   let count = 0;
   let batchBytes = 0;
@@ -324,13 +339,7 @@ export async function processJob(job: typeof importJobs.$inferSelect) {
       const [owner] = await tx
         .update(importJobs)
         .set({ processedCount: count, heartbeatAt: new Date() })
-        .where(
-          and(
-            eq(importJobs.id, job.id),
-            eq(importJobs.runId, job.runId!),
-            eq(importJobs.status, "processing"),
-          ),
-        )
+        .where(ownedRun)
         .returning({ id: importJobs.id });
       if (!owner) throw new Error("Le job n’est plus détenu par ce worker");
       await tx.insert(processedRows).values(batch);
@@ -354,7 +363,7 @@ export async function processJob(job: typeof importJobs.$inferSelect) {
       const stored = {
         organizationId: job.organizationId,
         importId: job.id,
-        runId: job.runId!,
+        runId,
         sourceLine: record.line,
         raw: record.values,
         ...normalized,
@@ -367,11 +376,12 @@ export async function processJob(job: typeof importJobs.$inferSelect) {
   );
   await flush();
   await db.transaction(async (tx) => {
-    await lockImport(tx, job.id);
+    await lockTransaction(tx, job.id);
     const [current] = await tx
       .select()
       .from(importJobs)
-      .where(and(eq(importJobs.id, job.id), eq(importJobs.runId, job.runId!)));
+      .where(ownedRun)
+      .for("update");
     if (!current) throw new Error("Job remplacé");
     const counts = await duplicatePass(tx, job);
     await tx
@@ -390,6 +400,8 @@ export async function processJob(job: typeof importJobs.$inferSelect) {
     await tx
       .insert(auditEvents)
       .values({ ...actor, action: "processing.completed", entityId: job.id });
+    if (outcome)
+      await enqueueImportOutcome(tx, job, counts, outcome.correlationId);
   });
 }
 export async function runNextJob() {
@@ -404,26 +416,7 @@ export async function runNextJob() {
     );
     return false;
   }
-  const [job] = await db.select().from(importJobs).where(eq(importJobs.id, id));
-  try {
-    await processJob(job);
-  } catch (error) {
-    const message =
-      error instanceof Error && error.name === "ImportError"
-        ? error.message
-        : "Le traitement a échoué. Vérifiez le fichier et relancez.";
-    await db
-      .update(importJobs)
-      .set({ status: "failed", error: message })
-      .where(and(eq(importJobs.id, id), eq(importJobs.runId, job.runId!)));
-    console.error(
-      JSON.stringify({
-        event: "processing.failed",
-        jobId: id,
-        error: error instanceof Error ? error.name : "Unknown",
-      }),
-    );
-  }
+  await runClaimedJob(id, false);
   return true;
 }
 export async function runJob(id: string) {
@@ -431,7 +424,12 @@ export async function runJob(id: string) {
     sql`UPDATE import_jobs SET status='processing', run_id=gen_random_uuid(), heartbeat_at=now(), attempts=attempts+1 WHERE id=${id} AND status='queued' AND attempts<3 RETURNING id`,
   );
   if (!result[0]) return false;
+  await runClaimedJob(id, true);
+  return true;
+}
+async function runClaimedJob(id: string, propagateError: boolean) {
   const [job] = await db.select().from(importJobs).where(eq(importJobs.id, id));
+  if (!job) return;
   try {
     await processJob(job);
   } catch (error) {
@@ -450,9 +448,8 @@ export async function runJob(id: string) {
         error: error instanceof Error ? error.name : "Unknown",
       }),
     );
-    throw error;
+    if (propagateError) throw error;
   }
-  return true;
 }
 export async function reviewRow(
   actor: Actor,
@@ -467,7 +464,7 @@ export async function reviewRow(
 ) {
   await getImport(actor, id);
   return db.transaction(async (tx) => {
-    await lockImport(tx, id);
+    await lockTransaction(tx, id);
     const [job] = await tx
       .select()
       .from(importJobs)
@@ -611,6 +608,7 @@ export async function qualityRows(
   page = 1,
 ) {
   const { job } = await getImport(actor, id);
+  if (job.status !== "ready") return { job, rows: [] };
   const conditions = [
     eq(processedRows.importId, id),
     eq(processedRows.organizationId, actor.organizationId),

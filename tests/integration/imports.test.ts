@@ -42,6 +42,7 @@ import {
   removeImport,
 } from "../../src/server/imports";
 import { LocalFileStore } from "../../src/server/storage";
+import { limitOrganizationAction } from "../../src/server/limits";
 import { hashToken } from "../../src/server/auth/password";
 import { DEFAULT_RULES } from "../../src/domain/catalog";
 import { defaultExportConfig } from "../../src/domain/exports";
@@ -112,6 +113,63 @@ afterAll(async () => {
   await sqlClient.end();
 });
 describe("compte et import sur PostgreSQL réel", () => {
+  it("partage la limite de dépôt entre requêtes concurrentes et isole les organisations", async () => {
+    const first = randomUUID();
+    const second = randomUUID();
+    try {
+      const attempts = await Promise.allSettled(
+        Array.from({ length: 31 }, () =>
+          limitOrganizationAction(first, "upload"),
+        ),
+      );
+      expect(
+        attempts.filter(({ status }) => status === "fulfilled"),
+      ).toHaveLength(30);
+      expect(attempts).toContainEqual({
+        status: "rejected",
+        reason: expect.objectContaining({ status: 429 }),
+      });
+      await expect(
+        limitOrganizationAction(second, "upload"),
+      ).resolves.toBeUndefined();
+    } finally {
+      for (const id of [first, second])
+        await db
+          .delete(authAttempts)
+          .where(eq(authAttempts.key, `organization:${id}:upload`));
+    }
+  });
+
+  it("préserve la source d’un import en traitement et reprend une suppression interrompue", async () => {
+    const id = await importCsv(actorA, "reprise.csv", csv(), store);
+    const { file } = await getImport(actorA, id);
+    await db
+      .update(importJobs)
+      .set({ status: "processing" })
+      .where(eq(importJobs.id, id));
+    await expect(removeImport(actorA, id, store)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect((await store.sample(file.storageKey)).length).toBeGreaterThan(0);
+    await db
+      .update(importJobs)
+      .set({ status: "failed" })
+      .where(eq(importJobs.id, id));
+    const remove = vi
+      .spyOn(store, "remove")
+      .mockRejectedValueOnce(new Error("Stockage indisponible"));
+    try {
+      await expect(removeImport(actorA, id, store)).rejects.toThrow(
+        "Stockage indisponible",
+      );
+      expect((await getImport(actorA, id)).job.status).toBe("deleting");
+    } finally {
+      remove.mockRestore();
+    }
+    await removeImport(actorA, id, store);
+    await expect(getImport(actorA, id)).rejects.toMatchObject({ status: 404 });
+    await expect(store.sample(file.storageKey)).rejects.toThrow();
+  });
   it("authentifie et refuse un mauvais mot de passe", async () => {
     expect(await authenticate(emailA, password)).toEqual(actorA);
     await expect(

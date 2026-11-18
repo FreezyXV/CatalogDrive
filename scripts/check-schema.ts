@@ -17,13 +17,18 @@ const required = [
   "export_requests",
 ];
 const missing = required.filter((t) => !names.includes(t));
-const [{ count }] = await sqlClient<{ count: number }[]>`
-  select count(*)::int as count from information_schema.columns
-  where table_name = 'users' and column_name = 'oidc_subject'`;
+const columns = await sqlClient<{ name: string }[]>`
+  select table_name || '.' || column_name as name
+  from information_schema.columns
+  where table_schema = 'public' and table_name in ('users', 'memberships')`;
+const requiredColumns = ["users.oidc_subject", "memberships.managed_by_oidc"];
+const missingColumns = requiredColumns.filter(
+  (name) => !columns.some((column) => column.name === name),
+);
 await sqlClient.end();
-if (missing.length || !count) {
+if (missing.length || missingColumns.length) {
   console.error(
-    `Schéma incomplet : ${[...missing, ...(count ? [] : ["users.oidc_subject"])].join(", ")}`,
+    `Schéma incomplet : ${[...missing, ...missingColumns].join(", ")}`,
   );
   process.exit(1);
 }

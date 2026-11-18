@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { db } from "../db";
+import { db, type Transaction } from "../db";
 import { outboxMessages } from "../db/schema";
-import type { Transaction } from "../catalog";
 import {
   SCHEMA_VERSION,
   integrationMessage,

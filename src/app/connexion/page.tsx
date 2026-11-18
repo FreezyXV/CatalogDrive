@@ -31,7 +31,8 @@ export default async function Login({
         </p>
       </div>
       <span className="fine-print">
-        Récupération de mot de passe indisponible dans ce pilote local.
+        Vous utilisez Google ou le SSO ? Gérez votre mot de passe auprès de
+        votre fournisseur de connexion.
       </span>
     </main>
   );

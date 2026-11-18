@@ -25,13 +25,13 @@ sequenceDiagram
 
 ## Règles appliquées par l'application
 
-| Situation à la connexion SSO                                | Résultat                                                                |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Première connexion, jeton sans groupe d'organisation        | Compte créé, organisation personnelle créée, rôle **admin**             |
-| Connexions suivantes                                        | Même compte (identifiant `sub`), mêmes organisations                    |
-| Email déjà utilisé par un compte local et vérifié par l'IdP | Le compte local est rattaché ; le mot de passe CataMotive reste valable |
-| Jeton avec groupes `/organizations/<id>/<rôle>`             | Organisations et rôles gérés par l'IdP, révocation de ce qui disparaît  |
-| Client machine (`client_credentials`) sans groupe           | Refusé (403) : jamais d'inscription automatique pour une machine        |
+| Situation à la connexion SSO                                  | Résultat                                                         |
+| ------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Première connexion, email vérifié, sans groupe d’organisation | Compte créé, organisation personnelle créée, rôle **admin**      |
+| Connexions suivantes                                          | Même compte (identifiant `sub`), mêmes organisations             |
+| Email déjà utilisé par un compte local et vérifié par l'IdP   | Le compte existant conserve sa méthode de connexion              |
+| Jeton avec groupes `/organizations/<id>/<rôle>`               | Rôles gérés par l’IdP, révocation y compris du dernier rôle      |
+| Client machine (`client_credentials`) sans groupe             | Refusé (403) : jamais d'inscription automatique pour une machine |
 
 Désactiver l'inscription libre : `OIDC_SELF_SIGNUP=false`.
 
