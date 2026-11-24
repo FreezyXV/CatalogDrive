@@ -2085,3 +2085,78 @@ tbody tr:hover {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.verify-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 24px;
+}
+.verify-banner span {
+  flex: 1;
+}
+.verify-banner .button {
+  min-height: 34px;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.organization-switcher select {
+  border: 1px solid #d8e3e1;
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 12px;
+  background: #fff;
+  color: var(--ink);
+  max-width: 180px;
+}
+.team-panel {
+  margin-top: 24px;
+}
+.invite-form {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 14px;
+}
+.invite-form .fine-print {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.team-panel td select {
+  border: 1px solid #d8e3e1;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: #fff;
+}
+.auth-links {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+  font-size: 11px;
+}
+.auth-links a {
+  color: #286d66;
+  font-weight: 600;
+}
+@media (max-width: 700px) {
+  .invite-form {
+    grid-template-columns: 1fr;
+  }
+  .verify-banner {
+    flex-wrap: wrap;
+  }
+}
+.team-panel > .alert {
+  margin: 0 24px 17px;
+}

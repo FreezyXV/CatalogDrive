@@ -432,3 +432,31 @@ export const storeSyncs = pgTable(
     }),
   ],
 );
+/**
+ * Team invitations. One pending invitation per (organization, email): sending
+ * a new one replaces the previous link. Only the SHA-256 of the token is kept.
+ */
+export const invitations = pgTable(
+  "invitations",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    email: text().notNull(),
+    role: text().notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    invitedBy: uuid("invited_by").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("invitations_org_email").on(t.organizationId, t.email),
+    foreignKey({
+      name: "invitations_inviter_fk",
+      columns: [t.invitedBy, t.organizationId],
+      foreignColumns: [memberships.userId, memberships.organizationId],
+    }),
+  ],
+);

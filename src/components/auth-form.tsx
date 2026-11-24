@@ -89,8 +89,8 @@ export function AuthForm({ register = false }: { register?: boolean }) {
       </button>
       {register && (
         <p className="fine-print">
-          Accès public gratuit pendant le pilote. Aucun paiement ni email de
-          vérification n’est envoyé pour le moment.
+          Accès public gratuit pendant le pilote. Un email de confirmation vous
+          sera envoyé ; votre espace reste utilisable en attendant.
         </p>
       )}
     </form>

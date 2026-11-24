@@ -7,6 +7,8 @@ import { billingEnabled } from "@/server/billing/config";
 import { StoreConnections } from "@/components/store-connections";
 import { listConnections } from "@/server/stores/connections";
 import { can } from "@/server/auth/rbac";
+import { TeamPanel } from "@/components/team-panel";
+import { teamOverview } from "@/server/team";
 const NOTICES: Record<string, string> = {
   success:
     "Paiement reçu. L’offre s’active dès la confirmation de Stripe, en général en quelques secondes : rechargez la page si besoin.",
@@ -19,17 +21,19 @@ export default async function SettingsPage({
 }) {
   const actor = await requirePageIdentity();
   const query = await searchParams;
-  const [data, billing, connections] = await Promise.all([
+  const [data, billing, connections, team] = await Promise.all([
     organizationSummary(actor),
     billingOverview(actor.organizationId),
     listConnections(actor),
+    teamOverview(actor),
   ]);
+  const canManageTeam = can(actor.role, "organization:manage");
   return (
     <>
       <div className="page-heading">
         <div>
           <span className="eyebrow">PARAMÈTRES</span>
-          <h1>Organisation et confidentialité</h1>
+          <h1>Organisation, équipe et confidentialité</h1>
           <p>
             Gérez votre abonnement, la conservation et suivez l’usage du mois.
           </p>
@@ -54,6 +58,18 @@ export default async function SettingsPage({
         maxRetention={
           billing.enforced ? billing.plan.quotas.maxRetentionDays : undefined
         }
+      />
+      <TeamPanel
+        team={{
+          ...team,
+          invitations: team.invitations.map((invitation) => ({
+            ...invitation,
+            expiresAt: invitation.expiresAt.toISOString(),
+          })),
+        }}
+        currentUserId={actor.userId}
+        canManage={canManageTeam}
+        canInvite={canManageTeam && actor.emailVerified}
       />
       <StoreConnections
         connections={connections}

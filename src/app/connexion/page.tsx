@@ -26,6 +26,9 @@ export default async function Login({
           <SsoButtons connections={sso.connections} error={ssoError} />
         ) : null}
         <AuthForm />
+        <p className="auth-links">
+          <Link href="/mot-de-passe-oublie">Mot de passe oublié ?</Link>
+        </p>
         <p className="auth-switch">
           Première visite ? <Link href="/inscription">Créer mon espace</Link>
         </p>

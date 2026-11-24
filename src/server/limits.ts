@@ -34,6 +34,7 @@ const hourlyLimits = {
   export: 60,
   store_sync: 20,
   store_connection: 20,
+  invite: 20,
 };
 
 export function limitOrganizationAction(

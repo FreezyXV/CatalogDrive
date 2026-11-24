@@ -1,4 +1,4 @@
-import { requirePageIdentity } from "@/server/auth";
+import { listOrganizations, requirePageIdentity } from "@/server/auth";
 import { WorkspaceShell } from "@/components/workspace-shell";
 export const dynamic = "force-dynamic";
 export default async function Layout({
@@ -7,5 +7,10 @@ export default async function Layout({
   children: React.ReactNode;
 }) {
   const identity = await requirePageIdentity();
-  return <WorkspaceShell identity={identity}>{children}</WorkspaceShell>;
+  const organizations = await listOrganizations(identity.userId);
+  return (
+    <WorkspaceShell identity={identity} organizations={organizations}>
+      {children}
+    </WorkspaceShell>
+  );
 }

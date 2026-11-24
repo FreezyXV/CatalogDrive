@@ -3,13 +3,17 @@ import { CircleHelp, PanelLeft, ShieldCheck } from "lucide-react";
 import { Brand } from "./brand";
 import { LogoutButton } from "./workspace-actions";
 import { WorkspaceNav } from "./workspace-nav";
+import { VerifyEmailBanner } from "./account-forms";
+import { OrganizationSwitcher } from "./organization-switcher";
 import type { Identity } from "@/server/auth";
 import { ROLE_LABELS } from "@/server/auth/rbac";
 export function WorkspaceShell({
   identity,
+  organizations,
   children,
 }: {
   identity: Identity;
+  organizations: { id: string; name: string }[];
   children: React.ReactNode;
 }) {
   return (
@@ -56,10 +60,17 @@ export function WorkspaceShell({
                 {ROLE_LABELS[identity.role]} · {identity.email}
               </small>
             </div>
+            <OrganizationSwitcher
+              current={identity.organizationId}
+              organizations={organizations}
+            />
             <LogoutButton />
           </div>
         </header>
-        <main className="main-content">{children}</main>
+        <main className="main-content">
+          {!identity.emailVerified && !identity.sso && <VerifyEmailBanner />}
+          {children}
+        </main>
         <footer className="workspace-footer">
           <span>CataMotive · Des données fiables, dès la source.</span>
           <span>Aucune compatibilité véhicule déduite.</span>
