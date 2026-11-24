@@ -93,7 +93,13 @@ if (init.status === 201) {
     headers: { "Content-Type": "application/octet-stream" },
     body: csv,
   });
-  step("dépôt vers le stockage objet (URL signée)", put.ok, put.status);
+  step(
+    "dépôt vers le stockage objet (URL signée)",
+    put.ok,
+    put.ok
+      ? put.status
+      : `${put.status} ${new URL(upload.url).host} ${(await put.text()).slice(0, 500)}`,
+  );
   const created = await json(
     await call("/api/imports", {
       method: "POST",
