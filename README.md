@@ -594,7 +594,8 @@ Hypothèses, risques et décisions : [docs/CONCEPTION.md](docs/CONCEPTION.md), [
 
 ## Limites connues
 
-- Paiement, vérification email, récupération de mot de passe, invitations d'équipe et connexions directes aux CMS ne sont pas intégrés. Les profils CMS produisent un fichier avec précontrôles, sans synchroniser de boutique.
+- Le paiement Stripe et les quotas par offre existent dans le code ([docs/PAIEMENT.md](docs/PAIEMENT.md)) mais restent inactifs tant que les clés Stripe ne sont pas configurées.
+- Vérification email, récupération de mot de passe, invitations d'équipe et connexions directes aux CMS ne sont pas intégrés. Les profils CMS produisent un fichier avec précontrôles, sans synchroniser de boutique.
 - Plafond de 500 000 lignes ; les limites de dépôt, de décompression, d'export (50 Mio), de base et de durée restent distinctes.
 - Le mode `queue` exige un broker et un worker hébergés ; la production Vercel reste en mode `inline` sans SSO.
 - Un utilisateur SSO membre de plusieurs organisations ouvre sa session sur la première (pas de sélecteur).

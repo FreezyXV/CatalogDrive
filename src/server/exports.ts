@@ -29,6 +29,7 @@ import {
   type ExportAttempt,
 } from "./integration/export-state";
 import { enqueue } from "./integration/outbox";
+import { assertExportQuota } from "./billing/quotas";
 
 function csvStream(
   records: AsyncIterable<Record<string, string>>,
@@ -120,6 +121,10 @@ export async function createExport(
           409,
           "Attendez la fin du traitement avant d’exporter.",
         );
+      await assertExportQuota(actor.organizationId, config, {
+        templateName,
+        executor: tx,
+      });
       if (request) {
         const attempt = request.attempt;
         const [active] = await tx

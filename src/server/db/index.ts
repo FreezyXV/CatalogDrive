@@ -3,31 +3,59 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "./schema";
 import { isTransactionPooler, normalizeDatabaseUrl } from "./connection";
-// Migrations prefer the direct (unpooled) URL when one is provided.
-const configured =
-  (process.env.DB_MIGRATING === "1" && process.env.DATABASE_URL_UNPOOLED) ||
-  process.env.DATABASE_URL;
-if (!configured)
-  throw new Error(
-    "DATABASE_URL manque. Exécutez npm run db:local ou configurez .env.local.",
-  );
-const connectionString = normalizeDatabaseUrl(configured);
-const transactionPool = isTransactionPooler(connectionString);
-const serverless = Boolean(process.env.VERCEL);
-const globalDb = globalThis as unknown as {
-  catamotiveSql?: ReturnType<typeof postgres>;
-};
-export const sqlClient =
-  globalDb.catamotiveSql ??
-  postgres(connectionString, {
-    max: serverless || transactionPool ? 1 : 5,
-    prepare: !transactionPool,
-    ...(transactionPool ? { max_pipeline: 1 } : {}),
-    idle_timeout: 20,
-    connect_timeout: 10,
-  });
-if (process.env.NODE_ENV !== "production") globalDb.catamotiveSql = sqlClient;
-export const db = drizzle(sqlClient, { schema });
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+
+type Sql = ReturnType<typeof postgres>;
+type Database = PostgresJsDatabase<typeof schema> & { $client: Sql };
+const globalDb = globalThis as unknown as { catamotiveSql?: Sql };
+let connection: { client: Sql; db: Database } | undefined;
+
+/**
+ * Opens the pool on first use rather than at import, so that `next build`
+ * can collect route configuration without DATABASE_URL (Vercel Preview).
+ */
+function connect() {
+  if (connection) return connection;
+  // Migrations prefer the direct (unpooled) URL when one is provided.
+  const configured =
+    (process.env.DB_MIGRATING === "1" && process.env.DATABASE_URL_UNPOOLED) ||
+    process.env.DATABASE_URL;
+  if (!configured)
+    throw new Error(
+      "DATABASE_URL manque. Exécutez npm run db:local ou configurez .env.local.",
+    );
+  const connectionString = normalizeDatabaseUrl(configured);
+  const transactionPool = isTransactionPooler(connectionString);
+  const serverless = Boolean(process.env.VERCEL);
+  const client =
+    globalDb.catamotiveSql ??
+    postgres(connectionString, {
+      max: serverless || transactionPool ? 1 : 5,
+      prepare: !transactionPool,
+      ...(transactionPool ? { max_pipeline: 1 } : {}),
+      idle_timeout: 20,
+      connect_timeout: 10,
+    });
+  if (process.env.NODE_ENV !== "production") globalDb.catamotiveSql = client;
+  connection = { client, db: drizzle(client, { schema }) };
+  return connection;
+}
+
+function forward<T extends object>(target: () => T) {
+  return (_: unknown, property: string | symbol) => {
+    const value = Reflect.get(target(), property);
+    return typeof value === "function" ? value.bind(target()) : value;
+  };
+}
+
+export const sqlClient = new Proxy<Sql>(function () {} as unknown as Sql, {
+  apply: (_target, thisArg, args) =>
+    Reflect.apply(connect().client, thisArg, args),
+  get: forward(() => connect().client),
+});
+export const db = new Proxy<Database>({} as Database, {
+  get: forward(() => connect().db),
+});
 
 export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 

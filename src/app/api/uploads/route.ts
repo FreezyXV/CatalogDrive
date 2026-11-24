@@ -4,6 +4,7 @@ import { authorize } from "@/server/auth/rbac";
 import { getFileStore, MULTIPART_PART_BYTES } from "@/server/storage";
 import { checkOrigin, errorResponse, HttpError, readJson } from "@/server/http";
 import { limitOrganizationAction } from "@/server/limits";
+import { assertStorageQuota } from "@/server/billing/quotas";
 
 const payload = z.object({
   bytes: z.number().int().min(1).max(MULTIPART_PART_BYTES),
@@ -21,6 +22,7 @@ export async function POST(request: Request) {
       );
     const { bytes } = payload.parse(await readJson(request));
     await limitOrganizationAction(actor.organizationId, "upload");
+    await assertStorageQuota(actor.organizationId, bytes);
     return Response.json(
       await store.signedUpload(actor.organizationId, bytes),
       {

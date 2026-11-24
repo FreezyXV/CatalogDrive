@@ -15,6 +15,7 @@ import {
 import { dispatchMode } from "./dispatch";
 import { enqueue } from "./outbox";
 import { activeExportAttempt } from "./export-state";
+import { assertExportQuota } from "../billing/quotas";
 
 /** Public input: only the profile is required, the rest defaults per profile. */
 export const exportRequestInput = z.object({
@@ -63,6 +64,8 @@ export async function requestExport(
 ) {
   await getImport(actor, importId);
   const config = buildExportConfig(input);
+  // Early answer for the caller; createExport checks again when it runs.
+  await assertExportQuota(actor.organizationId, config);
   const queued = dispatchMode() === "queue";
   const request = await db.transaction(async (tx) => {
     await lockTransaction(tx, importId);

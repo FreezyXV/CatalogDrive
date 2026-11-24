@@ -113,6 +113,7 @@ export async function requireApiPrincipal(
 const PROBLEM_TYPES: Record<number, string> = {
   400: "bad-request",
   401: "unauthorized",
+  402: "payment-required",
   403: "forbidden",
   404: "not-found",
   409: "conflict",

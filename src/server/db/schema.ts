@@ -39,6 +39,20 @@ export const organizations = pgTable("organizations", {
   id: uuid().defaultRandom().primaryKey(),
   name: text().notNull(),
   retentionDays: integer("retention_days").notNull().default(30),
+  /** Subscribed offer (src/domain/plans.ts); granted only with an entitled status. */
+  plan: text().notNull().default("essai"),
+  /** Stripe subscription status, or `manual` for an invoiced customer. */
+  subscriptionStatus: text("subscription_status"),
+  stripeCustomerId: text("stripe_customer_id").unique(),
+  stripeSubscriptionId: text("stripe_subscription_id").unique(),
+  currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+  createdAt: createdAt(),
+});
+/** Stripe webhook events already applied: makes redeliveries idempotent. */
+export const stripeEvents = pgTable("stripe_events", {
+  id: text().primaryKey(),
+  type: text().notNull(),
   createdAt: createdAt(),
 });
 export const memberships = pgTable(

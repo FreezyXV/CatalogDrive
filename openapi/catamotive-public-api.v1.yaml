@@ -143,6 +143,8 @@ paths:
           $ref: "#/components/responses/Unprocessable"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
   /imports/{importId}:
     parameters:
       - $ref: "#/components/parameters/ImportId"
@@ -245,6 +247,8 @@ paths:
           $ref: "#/components/responses/Unprocessable"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
   /imports/{importId}/rejected-lines:
     parameters:
       - $ref: "#/components/parameters/ImportId"
@@ -326,6 +330,8 @@ paths:
           $ref: "#/components/responses/Unprocessable"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+        "402":
+          $ref: "#/components/responses/QuotaExceeded"
   /export-requests/{requestId}:
     parameters:
       - name: requestId
@@ -476,6 +482,12 @@ components:
             $ref: "#/components/schemas/Problem"
     PayloadTooLarge:
       description: Fichier au-delà de la limite configurée.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    QuotaExceeded:
+      description: Quota de l’offre souscrite atteint (lignes, exports, stockage ou profil CMS non inclus).
       content:
         application/problem+json:
           schema:

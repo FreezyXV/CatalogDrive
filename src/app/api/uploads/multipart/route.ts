@@ -4,6 +4,7 @@ import { authorize } from "@/server/auth/rbac";
 import { getFileStore } from "@/server/storage";
 import { checkOrigin, errorResponse, HttpError, readJson } from "@/server/http";
 import { limitOrganizationAction } from "@/server/limits";
+import { assertStorageQuota } from "@/server/billing/quotas";
 
 export const runtime = "nodejs";
 
@@ -34,6 +35,7 @@ export async function POST(request: Request) {
       throw new HttpError(409, "Transfert multipart indisponible.");
     if (body.action === "start") {
       await limitOrganizationAction(actor.organizationId, "upload");
+      await assertStorageQuota(actor.organizationId, body.bytes);
       return Response.json(
         await store.beginMultipartUpload(actor.organizationId, body.bytes),
         { status: 201 },

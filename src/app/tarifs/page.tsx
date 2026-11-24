@@ -2,41 +2,11 @@ import Link from "next/link";
 import { Check, ArrowRight } from "lucide-react";
 import { IMPORT_FORMAT_LABEL } from "@/domain/import-formats";
 import { Brand } from "@/components/brand";
-const plans = [
-  {
-    name: "Essai",
-    price: "0 €",
-    text: "Découvrir le parcours avec un petit catalogue.",
-    features: [
-      "Compte et organisation",
-      IMPORT_FORMAT_LABEL,
-      "Export générique",
-    ],
-  },
-  {
-    name: "Starter",
-    price: "59 €",
-    text: "Pour un revendeur indépendant.",
-    features: ["Imports récurrents", "Profils CMS", "Modèles fournisseurs"],
-  },
-  {
-    name: "Pro",
-    price: "199 €",
-    text: "Pour une équipe catalogue active.",
-    features: [
-      "Volumes supérieurs",
-      "Historique complet",
-      "Support prioritaire",
-    ],
-  },
-  {
-    name: "Business",
-    price: "499 €",
-    text: "Pour plusieurs catalogues ou clients.",
-    features: ["Usage étendu", "Gouvernance renforcée", "Accompagnement"],
-  },
-];
+import { PLAN_IDS, PLANS, quotaLines } from "@/domain/plans";
+import { billingEnabled } from "@/server/billing/config";
+const plans = PLAN_IDS.map((id) => PLANS[id]);
 export default function PricingPage() {
+  const payable = billingEnabled();
   return (
     <div className="landing">
       <header className="landing-header">
@@ -52,31 +22,44 @@ export default function PricingPage() {
         <span className="eyebrow">DES OFFRES LISIBLES</span>
         <h1>Le temps catalogue redevient du temps métier.</h1>
         <p>
-          Les paiements ne sont pas encore activés. Les offres servent de cadre
-          au pilote et n’entraînent aucun débit.
+          {payable
+            ? "Prix hors taxes, sans engagement. Créez votre espace puis souscrivez depuis Paramètres ; le paiement est sécurisé par Stripe."
+            : "Les paiements ne sont pas encore activés. Les offres servent de cadre au pilote et n’entraînent aucun débit."}
         </p>
         <div className="pricing-grid">
           {plans.map((plan) => (
             <article
               className={`panel pricing-card ${plan.name === "Starter" ? "featured" : ""}`}
-              key={plan.name}
+              key={plan.id}
             >
               <span className="format-tag">{plan.name.toUpperCase()}</span>
               <strong>
-                {plan.price}
-                <small>/ mois</small>
+                {plan.price} €<small> HT / mois</small>
               </strong>
               <p>{plan.text}</p>
               <ul>
-                {plan.features.map((feature) => (
+                {[
+                  ...(plan.id === "essai" ? [IMPORT_FORMAT_LABEL] : []),
+                  ...plan.features,
+                  ...quotaLines(plan.quotas),
+                ].map((feature) => (
                   <li key={feature}>
                     <Check size={15} />
                     {feature}
                   </li>
                 ))}
               </ul>
-              <Link href="/inscription" className="button primary">
-                Créer mon espace
+              <Link
+                href={
+                  plan.id === "essai" || !payable
+                    ? "/inscription"
+                    : `/settings?plan=${plan.id}#abonnement`
+                }
+                className="button primary"
+              >
+                {plan.id === "essai" || !payable
+                  ? "Créer mon espace"
+                  : `Choisir ${plan.name}`}
               </Link>
             </article>
           ))}
