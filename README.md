@@ -93,6 +93,7 @@ flowchart LR
 7. Accepter une suggestion, modifier une valeur, conserver l'original ou exclure une ligne.
 8. Configurer un export générique, WooCommerce, PrestaShop, Shopify ou personnalisé.
 9. Télécharger le catalogue et son rapport traçable.
+10. Ou l'envoyer directement dans une boutique Shopify ou WooCommerce connectée dans Paramètres (création en brouillon, mise à jour par SKU) : voir [CONNECTEURS_CMS.md](docs/integration/CONNECTEURS_CMS.md).
 
 Le fichier [public/demo/fournisseur-demo.csv](public/demo/fournisseur-demo.csv) contient uniquement des données fictives.
 
