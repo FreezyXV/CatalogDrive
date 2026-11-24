@@ -54,7 +54,7 @@ Garanties : signature vérifiée sur le corps brut ; l'abonnement est **relu che
 2. Activer le **portail client** (Paramètres > Billing > Customer portal) : moyen de paiement, factures, résiliation en fin de période, et changement d'offre entre les trois prix.
 3. Créer l'endpoint webhook `https://<domaine>/api/billing/webhook` avec les événements ci-dessus.
 4. Variables Vercel (Production et Preview) : `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_BUSINESS`, optionnellement `STRIPE_AUTOMATIC_TAX=true` si Stripe Tax est configuré.
-5. Appliquer la migration `0007_billing_plans` (workflow `migrate.yml`), puis redéployer : la page Tarifs est statique et lit la configuration au build.
+5. Appliquer la migration `0008_billing_plans` (workflow `migrate.yml`), puis redéployer : la page Tarifs est statique et lit la configuration au build.
 6. Recette en mode test : carte `4242 4242 4242 4242` → offre active ; `stripe trigger customer.subscription.updated` ; carte `4000 0000 0000 0341` pour un impayé ; résiliation depuis le portail ; vérifier chaque fois la page Paramètres et un dépassement de quota.
 
 En local : `stripe listen --forward-to 127.0.0.1:3000/api/billing/webhook` donne le `STRIPE_WEBHOOK_SECRET`.

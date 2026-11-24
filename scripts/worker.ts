@@ -9,6 +9,7 @@ if (process.env.JOB_DISPATCH === "queue") {
   process.exit(0);
 }
 const { runNextJob } = await import("../src/server/catalog");
+const { runNextSync } = await import("../src/server/stores/sync");
 const { sqlClient } = await import("../src/server/db");
 let stopping = false;
 process.on("SIGTERM", () => {
@@ -20,7 +21,7 @@ process.on("SIGINT", () => {
 console.log("Worker PostgreSQL CataMotive prêt.");
 while (!stopping) {
   try {
-    if (!(await runNextJob()))
+    if (!(await runNextJob()) && !(await runNextSync()))
       await new Promise((resolve) => setTimeout(resolve, 1000));
   } catch {
     console.error("Worker indisponible : vérifiez PostgreSQL.");

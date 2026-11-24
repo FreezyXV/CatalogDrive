@@ -294,8 +294,12 @@ input:focus-visible {
 .export-form > .alert {
   margin: 0 24px 24px;
 }
-.export-history {
+.export-history,
+.store-panel {
   margin-top: 24px;
+}
+.store-panel > .alert {
+  margin: 0 24px 24px;
 }
 .download-links {
   flex-wrap: wrap;

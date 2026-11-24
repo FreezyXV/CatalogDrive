@@ -7,6 +7,10 @@ import { listExports, listExportTemplates } from "@/server/exports";
 import { HttpError } from "@/server/http";
 import { ExportForm } from "@/components/export-form";
 import { PROFILES } from "@/domain/exports";
+import { StoreSyncPanel } from "@/components/store-sync-panel";
+import { listConnections } from "@/server/stores/connections";
+import { listSyncs } from "@/server/stores/sync";
+import { can } from "@/server/auth/rbac";
 
 export default async function ExportPage({
   params,
@@ -20,9 +24,11 @@ export default async function ExportPage({
     throw error;
   });
   if (job.status !== "ready") notFound();
-  const [exports, templates] = await Promise.all([
+  const [exports, templates, connections, syncs] = await Promise.all([
     listExports(actor, id),
     listExportTemplates(actor),
+    listConnections(actor),
+    listSyncs(actor, id),
   ]);
   const counts = job.counts!;
   return (
@@ -46,6 +52,12 @@ export default async function ExportPage({
         </span>
       </div>
       <ExportForm importId={id} templates={templates} />
+      <StoreSyncPanel
+        importId={id}
+        connections={connections}
+        initialSyncs={syncs}
+        canSend={can(actor.role, "export:create")}
+      />
       <section className="panel export-history">
         <div className="panel-heading">
           <div>

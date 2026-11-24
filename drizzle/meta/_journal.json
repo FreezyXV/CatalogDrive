@@ -54,8 +54,15 @@
     {
       "idx": 7,
       "version": "7",
-      "when": 1795499150321,
-      "tag": "0007_billing_plans",
+      "when": 1795499251306,
+      "tag": "0007_store_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795512452361,
+      "tag": "0008_billing_plans",
       "breakpoints": true
     }
   ]

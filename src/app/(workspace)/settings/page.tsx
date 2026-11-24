@@ -4,6 +4,8 @@ import { OrganizationForm } from "@/components/organization-form";
 import { BillingPanel } from "@/components/billing-panel";
 import { billingOverview } from "@/server/billing/quotas";
 import { billingEnabled } from "@/server/billing/config";
+import { StoreConnections } from "@/components/store-connections";
+import { listConnections } from "@/server/stores/connections";
 import { can } from "@/server/auth/rbac";
 const NOTICES: Record<string, string> = {
   success:
@@ -17,9 +19,10 @@ export default async function SettingsPage({
 }) {
   const actor = await requirePageIdentity();
   const query = await searchParams;
-  const [data, billing] = await Promise.all([
+  const [data, billing, connections] = await Promise.all([
     organizationSummary(actor),
     billingOverview(actor.organizationId),
+    listConnections(actor),
   ]);
   return (
     <>
@@ -51,6 +54,10 @@ export default async function SettingsPage({
         maxRetention={
           billing.enforced ? billing.plan.quotas.maxRetentionDays : undefined
         }
+      />
+      <StoreConnections
+        connections={connections}
+        canManage={can(actor.role, "store:manage")}
       />
     </>
   );
