@@ -29,6 +29,7 @@ import { normalizeRow, similarity, statusFor } from "@/domain/normalization";
 import { enqueue } from "./integration/outbox";
 import { dispatchMode } from "./integration/dispatch";
 import { enqueueImportOutcome } from "./integration/import-outcome";
+import { assertProcessingQuota, assertTemplateQuota } from "./billing/quotas";
 
 export type Actor = Pick<Identity, "userId" | "organizationId">;
 export async function saveMapping(
@@ -40,6 +41,7 @@ export async function saveMapping(
   templateName?: string,
 ) {
   const { job, file } = await getImport(actor, id);
+  if (templateName) await assertTemplateQuota(actor.organizationId);
   if (["queued", "processing", "ready", "deleting"].includes(job.status))
     throw new HttpError(
       409,
@@ -145,6 +147,12 @@ export async function queueImport(
       return { queued: false, messageId: null, route: null };
     if (!job.mapping || !job.rules)
       throw new HttpError(422, "Validez le mapping avant le traitement.");
+    await assertProcessingQuota(
+      tx,
+      actor.organizationId,
+      id,
+      job.diagnostic.rowCount,
+    );
     await tx
       .update(importJobs)
       .set({ status: "queued", error: null, processedCount: 0, attempts: 0 })

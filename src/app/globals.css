@@ -2057,3 +2057,27 @@ tbody tr:hover {
   margin-top: 6px;
   text-align: center;
 }
+.billing-section {
+  display: grid;
+  gap: 20px;
+}
+.billing-section .stats-grid {
+  margin: 0;
+}
+.billing-section .pricing-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 0;
+}
+.billing-section .alert {
+  margin: 0;
+}
+.alert.info {
+  background: #edf3f3;
+  color: #245b57;
+  border-color: #cbdada;
+}
+@media (max-width: 900px) {
+  .billing-section .pricing-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

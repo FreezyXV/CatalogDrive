@@ -4,9 +4,11 @@ import { Save } from "lucide-react";
 export function OrganizationForm({
   name: initialName,
   retention: initialRetention,
+  maxRetention = 365,
 }: {
   name: string;
   retention: number;
+  maxRetention?: number;
 }) {
   const [name, setName] = useState(initialName);
   const [retentionDays, setRetention] = useState(initialRetention);
@@ -52,11 +54,13 @@ export function OrganizationForm({
             value={retentionDays}
             onChange={(event) => setRetention(Number(event.target.value))}
           >
-            {[7, 14, 30, 60, 90, 180, 365].map((days) => (
-              <option value={days} key={days}>
-                {days} jours
-              </option>
-            ))}
+            {[7, 14, 30, 60, 90, 180, 365]
+              .filter((days) => days <= maxRetention)
+              .map((days) => (
+                <option value={days} key={days}>
+                  {days} jours
+                </option>
+              ))}
           </select>
         </label>
       </div>

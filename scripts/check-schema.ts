@@ -15,13 +15,18 @@ const required = [
   "processed_rows",
   "outbox_messages",
   "export_requests",
+  "stripe_events",
 ];
 const missing = required.filter((t) => !names.includes(t));
 const columns = await sqlClient<{ name: string }[]>`
   select table_name || '.' || column_name as name
   from information_schema.columns
-  where table_schema = 'public' and table_name in ('users', 'memberships')`;
-const requiredColumns = ["users.oidc_subject", "memberships.managed_by_oidc"];
+  where table_schema = 'public' and table_name in ('users', 'memberships', 'organizations')`;
+const requiredColumns = [
+  "users.oidc_subject",
+  "memberships.managed_by_oidc",
+  "organizations.plan",
+];
 const missingColumns = requiredColumns.filter(
   (name) => !columns.some((column) => column.name === name),
 );

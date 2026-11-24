@@ -9,6 +9,7 @@ import {
 } from "@/server/api/v1";
 import { uploadLimitBytes, uploadLimitLabel } from "@/domain/upload-limit";
 import { limitOrganizationAction } from "@/server/limits";
+import { assertStorageQuota } from "@/server/billing/quotas";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -54,6 +55,10 @@ export async function POST(request: Request) {
       );
     if (!request.body) throw new ApiError(400, "Corps de requête vide.");
     await limitOrganizationAction(principal.organizationId, "import");
+    await assertStorageQuota(
+      principal.organizationId,
+      Number(request.headers.get("content-length") || 0),
+    );
     const id = await importCsv(principal, name, request.body);
     return json(importResource(await getImport(principal, id)), principal, {
       status: 201,

@@ -7,6 +7,7 @@ import {
   usageRecords,
 } from "./db/schema";
 import type { Identity } from "./auth";
+import { assertRetentionAllowed } from "./billing/quotas";
 
 export async function organizationSummary(actor: Identity) {
   const [organization] = await db
@@ -22,7 +23,7 @@ export async function organizationSummary(actor: Identity) {
     .where(eq(usageRecords.organizationId, actor.organizationId));
   const [storage] = await db
     .select({
-      bytes: sql<number>`coalesce(sum(${uploadedFiles.sizeBytes}),0)::int`,
+      bytes: sql<number>`coalesce(sum(${uploadedFiles.sizeBytes}),0)::float8`,
     })
     .from(uploadedFiles)
     .where(eq(uploadedFiles.organizationId, actor.organizationId));
@@ -33,6 +34,7 @@ export async function updateOrganization(
   actor: Identity,
   values: { name: string; retentionDays: number },
 ) {
+  await assertRetentionAllowed(actor.organizationId, values.retentionDays);
   return db.transaction(async (tx) => {
     const [organization] = await tx
       .update(organizations)

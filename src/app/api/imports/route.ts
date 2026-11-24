@@ -1,6 +1,7 @@
 import { requireIdentity } from "@/server/auth";
 import { authorize } from "@/server/auth/rbac";
 import { limitOrganizationAction } from "@/server/limits";
+import { assertStorageQuota } from "@/server/billing/quotas";
 import {
   importCsv,
   importSignedUpload,
@@ -45,6 +46,10 @@ export async function POST(request: Request) {
         413,
         `Le fichier dépasse la limite de ${uploadLimitLabel()}.`,
       );
+    await assertStorageQuota(
+      identity.organizationId,
+      Number(request.headers.get("content-length") || 0),
+    );
     let filename: string;
     try {
       filename = decodeURIComponent(request.headers.get("x-file-name") ?? "");

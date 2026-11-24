@@ -50,6 +50,13 @@
       "when": 1795040161911,
       "tag": "0006_track_oidc_memberships",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795499150321,
+      "tag": "0007_billing_plans",
+      "breakpoints": true
     }
   ]
 }
