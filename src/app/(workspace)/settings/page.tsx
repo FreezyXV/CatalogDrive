@@ -1,9 +1,15 @@
 import { requirePageIdentity } from "@/server/auth";
 import { organizationSummary } from "@/server/organization";
 import { OrganizationForm } from "@/components/organization-form";
+import { StoreConnections } from "@/components/store-connections";
+import { listConnections } from "@/server/stores/connections";
+import { can } from "@/server/auth/rbac";
 export default async function SettingsPage() {
   const actor = await requirePageIdentity();
-  const data = await organizationSummary(actor);
+  const [data, connections] = await Promise.all([
+    organizationSummary(actor),
+    listConnections(actor),
+  ]);
   return (
     <>
       <div className="page-heading">
@@ -38,6 +44,10 @@ export default async function SettingsPage() {
       <OrganizationForm
         name={data.organization.name}
         retention={data.organization.retentionDays}
+      />
+      <StoreConnections
+        connections={connections}
+        canManage={can(actor.role, "store:manage")}
       />
     </>
   );
