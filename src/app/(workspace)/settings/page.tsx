@@ -52,6 +52,10 @@ export default async function SettingsPage({
           billing.enforced ? billing.plan.quotas.maxRetentionDays : undefined
         }
       />
+      <StoreConnections
+        connections={connections}
+        canManage={can(actor.role, "store:manage")}
+      />
     </>
   );
 }

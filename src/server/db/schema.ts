@@ -353,3 +353,82 @@ export const accountTokens = pgTable("account_tokens", {
   purpose: text().notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 });
+/** Online store reached by direct export (docs/integration/CONNECTEURS_CMS.md). */
+export const storeConnections = pgTable(
+  "store_connections",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    platform: text().notNull(),
+    label: text().notNull(),
+    /** Shopify admin domain or WooCommerce HTTPS base URL. */
+    address: text().notNull(),
+    /** AES-256-GCM, connection id as associated data. Never sent to clients. */
+    credentials: text().notNull(),
+    secretHint: text("secret_hint").notNull(),
+    storeName: text("store_name"),
+    currency: text(),
+    pricesIncludeTax: boolean("prices_include_tax"),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique().on(t.id, t.organizationId),
+    unique().on(t.organizationId, t.platform, t.address),
+  ],
+);
+export type SyncCounts = {
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+};
+export type SyncError = { line: number; sku: string; message: string };
+export const storeSyncs = pgTable(
+  "store_syncs",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    importId: uuid("import_id").notNull(),
+    connectionId: uuid("connection_id").notNull(),
+    requestedBy: uuid("requested_by").notNull(),
+    updateMode: text("update_mode").notNull(),
+    dryRun: boolean("dry_run").notNull().default(false),
+    status: text().notNull().default("queued"),
+    /** Last source line handled: the sync resumes after it. */
+    cursor: integer().notNull().default(0),
+    total: integer().notNull().default(0),
+    counts: jsonb()
+      .$type<SyncCounts>()
+      .notNull()
+      .default({ created: 0, updated: 0, skipped: 0, failed: 0 }),
+    errors: jsonb().$type<SyncError[]>().notNull().default([]),
+    runId: uuid("run_id"),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
+    error: text(),
+    createdAt: createdAt(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("store_syncs_org_import").on(t.organizationId, t.importId),
+    index("store_syncs_pending").on(t.status, t.heartbeatAt),
+    foreignKey({
+      name: "store_syncs_import_org_fk",
+      columns: [t.importId, t.organizationId],
+      foreignColumns: [importJobs.id, importJobs.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "store_syncs_connection_org_fk",
+      columns: [t.connectionId, t.organizationId],
+      foreignColumns: [storeConnections.id, storeConnections.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "store_syncs_member_fk",
+      columns: [t.requestedBy, t.organizationId],
+      foreignColumns: [memberships.userId, memberships.organizationId],
+    }),
+  ],
+);

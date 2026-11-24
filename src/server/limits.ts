@@ -32,6 +32,8 @@ const hourlyLimits = {
   mapping: 60,
   processing: 30,
   export: 60,
+  store_sync: 20,
+  store_connection: 20,
 };
 
 export function limitOrganizationAction(

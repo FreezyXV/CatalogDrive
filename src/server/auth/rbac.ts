@@ -22,6 +22,7 @@ export const PERMISSIONS = {
   "export:create": ["admin", "operator"],
   "import:delete": ["admin"],
   "organization:manage": ["admin"],
+  "store:manage": ["admin"],
 } as const satisfies Record<string, readonly Role[]>;
 export type Permission = keyof typeof PERMISSIONS;
 

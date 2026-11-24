@@ -34,6 +34,7 @@ describe("RBAC par organisation", () => {
         "export:create",
         "import:delete",
         "organization:manage",
+        "store:manage",
       ],
       operator: [
         "import:read",
