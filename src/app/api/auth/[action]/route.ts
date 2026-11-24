@@ -7,16 +7,12 @@ import {
   logout,
   registerAccount,
 } from "@/server/auth";
+import { sendEmailVerification } from "@/server/auth/account";
+import { emailSchema, passwordSchema } from "@/server/auth/schemas";
 import { checkOrigin, errorResponse, HttpError, readJson } from "@/server/http";
 const credentials = z.object({
-  email: z
-    .email("Indiquez une adresse email valide.")
-    .max(254)
-    .transform((email) => email.toLowerCase()),
-  password: z
-    .string()
-    .min(12, "Le mot de passe doit contenir au moins 12 caractères.")
-    .max(128, "Le mot de passe est limité à 128 caractères."),
+  email: emailSchema,
+  password: passwordSchema,
 });
 const registration = credentials.extend({
   organizationName: z
@@ -53,6 +49,14 @@ export async function POST(
           )
         : await authenticate(input.email, input.password);
     await createSession(actor);
+    if (action === "register")
+      // The account works right away; a mail outage must not block sign-up.
+      await sendEmailVerification(actor.userId).catch((error: unknown) =>
+        console.error(
+          "Email de vérification non envoyé",
+          error instanceof Error ? error.name : "UnknownError",
+        ),
+      );
     return Response.json(
       { ok: true },
       { status: action === "register" ? 201 : 200 },

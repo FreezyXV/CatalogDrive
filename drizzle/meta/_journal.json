@@ -64,6 +64,13 @@
       "when": 1795512452361,
       "tag": "0008_billing_plans",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795512695315,
+      "tag": "0009_team_invitations",
+      "breakpoints": true
     }
   ]
 }

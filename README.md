@@ -215,7 +215,8 @@ erDiagram
 | Table                                         | Contenu                                                                                    |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `users`, `organizations`, `memberships`       | Comptes, organisations, rôle par organisation (`admin`, `operator`, `reviewer`, `revoked`) |
-| `sessions`, `account_tokens`, `auth_attempts` | Sessions hachées, jetons de compte, limitation des tentatives                              |
+| `sessions`, `account_tokens`, `auth_attempts` | Sessions hachées, liens de vérification et de réinitialisation, limitation des tentatives  |
+| `invitations`                                 | Invitations d'équipe en attente (jeton haché, rôle, expiration 7 jours)                    |
 | `uploaded_files`, `source_archives`           | Fichiers source (SHA-256, taille, clé de stockage) et archives ZIP                         |
 | `import_jobs`                                 | État de l'import, diagnostic, mapping, règles, compteurs qualité                           |
 | `processed_rows`                              | Une ligne par ligne source : brut, normalisé, statut, anomalies                            |
@@ -284,6 +285,18 @@ flowchart LR
 | Supprimer un import, gérer l'organisation |   ✓   |          |          |
 
 Les comptes créés avant le RBAC (rôle `owner`) sont traités comme `admin`.
+
+### Comptes locaux : email, mot de passe, équipe
+
+| Parcours                | Fonctionnement                                                                                                                                                                                                               |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vérification d'email    | Lien envoyé à l'inscription (24 h, usage unique, renvoi depuis le bandeau de l'espace). L'espace reste utilisable ; inviter exige une adresse confirmée.                                                                     |
+| Mot de passe oublié     | `/mot-de-passe-oublie` : réponse identique que l'adresse existe ou non, lien d'1 h à usage unique. La réinitialisation ferme toutes les sessions et confirme l'adresse. Les comptes SSO gèrent leur mot de passe chez l'IdP. |
+| Invitations             | Paramètres › Équipe (admin) : invitation par email avec un rôle existant, valable 7 jours, annulable. L'invité crée son compte (sans organisation personnelle), confirme son mot de passe ou rejoint depuis sa session.      |
+| Rôles et retrait        | L'admin change le rôle ou retire un membre (passage en `revoked`, sessions fermées). Il ne peut pas modifier son propre accès ; les rôles gérés par le SSO restent en lecture seule.                                         |
+| Plusieurs organisations | Un sélecteur apparaît dans l'en-tête dès qu'un utilisateur appartient à plusieurs organisations.                                                                                                                             |
+
+Les liens sont des secrets aléatoires de 256 bits dont seul le SHA-256 est stocké. Envoi : `MAIL_DRIVER=resend` (`RESEND_API_KEY`, `MAIL_FROM`) ; en développement, les emails s'affichent dans la console.
 
 ## API
 
@@ -595,8 +608,8 @@ Hypothèses, risques et décisions : [docs/CONCEPTION.md](docs/CONCEPTION.md), [
 ## Limites connues
 
 - Le paiement Stripe et les quotas par offre existent dans le code ([docs/PAIEMENT.md](docs/PAIEMENT.md)) mais restent inactifs tant que les clés Stripe ne sont pas configurées.
-- Vérification email, récupération de mot de passe, invitations d'équipe et connexions directes aux CMS ne sont pas intégrés. Les profils CMS produisent un fichier avec précontrôles, sans synchroniser de boutique.
+- Les connexions directes aux CMS ne sont pas intégrées. Les profils CMS produisent un fichier avec précontrôles, sans synchroniser de boutique.
 - Plafond de 500 000 lignes ; les limites de dépôt, de décompression, d'export (50 Mio), de base et de durée restent distinctes.
 - Le mode `queue` exige un broker et un worker hébergés ; la production Vercel reste en mode `inline` sans SSO.
-- Un utilisateur SSO membre de plusieurs organisations ouvre sa session sur la première (pas de sélecteur).
+- Un utilisateur membre de plusieurs organisations ouvre sa session sur la première, puis change d'organisation avec le sélecteur de l'en-tête.
 - `docker-compose.integration.yml` est validé syntaxiquement ; le lab a été vérifié à partir des distributions officielles (voir [VERIFICATION.md](docs/VERIFICATION.md)).

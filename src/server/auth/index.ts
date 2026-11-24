@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { and, eq, gt, ne } from "drizzle-orm";
+import { and, asc, eq, gt, ne } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   users,
@@ -23,6 +23,9 @@ export type Identity = {
   email: string;
   organizationName: string;
   role: Role;
+  emailVerified: boolean;
+  /** Signs in through the identity provider (no local password). */
+  sso: boolean;
 };
 export async function currentIdentity(): Promise<Identity | null> {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
@@ -34,6 +37,8 @@ export async function currentIdentity(): Promise<Identity | null> {
       email: users.email,
       organizationName: organizations.name,
       role: memberships.role,
+      emailVerifiedAt: users.emailVerifiedAt,
+      oidcSubject: users.oidcSubject,
     })
     .from(sessions)
     .innerJoin(users, eq(sessions.userId, users.id))
@@ -53,7 +58,14 @@ export async function currentIdentity(): Promise<Identity | null> {
       ),
     )
     .limit(1);
-  return identity ? { ...identity, role: normalizeRole(identity.role) } : null;
+  if (!identity) return null;
+  const { emailVerifiedAt, oidcSubject, ...rest } = identity;
+  return {
+    ...rest,
+    role: normalizeRole(identity.role),
+    emailVerified: emailVerifiedAt !== null,
+    sso: oidcSubject !== null,
+  };
 }
 export async function requireIdentity() {
   const identity = await currentIdentity();
@@ -77,10 +89,8 @@ export async function limitAuth(email: string) {
     "Trop de tentatives pour cette adresse. Réessayez dans 15 minutes.",
   );
 }
-export function networkAttemptKey(
-  request: Request,
-  action: "login" | "register",
-) {
+type NetworkAction = "login" | "register" | "password_reset" | "invitation";
+export function networkAttemptKey(request: Request, action: NetworkAction) {
   // Vercel replaces this header at its edge. Ignore caller-supplied headers
   // when the app runs locally or outside that trusted proxy.
   if (process.env.VERCEL !== "1") return null;
@@ -93,11 +103,11 @@ export function networkAttemptKey(
 }
 export async function limitAuthNetwork(
   request: Request,
-  action: "login" | "register",
+  action: NetworkAction,
 ) {
   const key = networkAttemptKey(request, action);
   if (!key) return;
-  const maximum = action === "register" ? 10 : 60;
+  const maximum = action === "login" ? 60 : action === "invitation" ? 30 : 10;
   await limitAttempts(
     key,
     maximum,
@@ -227,4 +237,33 @@ async function ssoLogoutUrl() {
     post_logout_redirect_uri: `${process.env.APP_ORIGIN ?? "http://127.0.0.1:3000"}/connexion`,
   }).toString();
   return url.toString();
+}
+
+/** Organizations the user can open, for the organization switcher. */
+export async function listOrganizations(userId: string) {
+  return db
+    .select({ id: organizations.id, name: organizations.name })
+    .from(memberships)
+    .innerJoin(organizations, eq(memberships.organizationId, organizations.id))
+    .where(and(eq(memberships.userId, userId), ne(memberships.role, "revoked")))
+    .orderBy(asc(organizations.name));
+}
+
+export async function switchOrganization(
+  actor: Identity,
+  organizationId: string,
+) {
+  const [membership] = await db
+    .select({ organizationId: memberships.organizationId })
+    .from(memberships)
+    .where(
+      and(
+        eq(memberships.userId, actor.userId),
+        eq(memberships.organizationId, organizationId),
+        ne(memberships.role, "revoked"),
+      ),
+    )
+    .limit(1);
+  if (!membership) throw new HttpError(403, "Organisation inaccessible.");
+  await createSession({ userId: actor.userId, organizationId });
 }

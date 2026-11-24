@@ -60,6 +60,8 @@ const identity = () => ({
   email: `billing-${suffix}@example.test`,
   organizationName: "Organisation facturée",
   role: "admin" as const,
+  emailVerified: true,
+  sso: false,
 });
 
 function stripeEnv() {
